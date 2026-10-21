@@ -354,10 +354,10 @@ export default function AppointmentModal({
         status: formData.status || 'AGENDADO',
         scheduled_date: formData.scheduled_date,
         window_start: formData.window_start,
-        window_end: formData.window_end,
-        time_window: `${formData.window_start} - ${formData.window_end}`,
+        window_end: formData.window_start,
+        time_window: formData.window_start,
         scheduled_time: formData.window_start,
-        estimated_duration_min: Number(formData.estimated_duration_min) || 60,
+        estimated_duration_min: 60,
         cep: formData.cep.trim(),
         address: composedAddress,
         neighborhood: finalNeighborhood || 'Centro',
@@ -499,8 +499,8 @@ export default function AppointmentModal({
             </div>
           </div>
 
-          {/* Data e Janela de Atendimento Livre */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 pt-1">
+          {/* Data e Horário do Serviço */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Data do serviço <span className="text-[#ff6b6f]">*</span>
@@ -510,14 +510,14 @@ export default function AppointmentModal({
                 required
                 value={formData.scheduled_date}
                 onChange={(e) => setFormData({ ...formData, scheduled_date: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2 text-sm text-white"
+                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
               />
             </div>
 
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-[#ff6b6f]" />
-                Horário Início <span className="text-[#ff6b6f]">*</span>
+                Horário do serviço <span className="text-[#ff6b6f]">*</span>
               </label>
               <input
                 type="time"
@@ -525,42 +525,8 @@ export default function AppointmentModal({
                 required
                 value={formData.window_start}
                 onChange={(e) => setFormData({ ...formData, window_start: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2 text-sm text-white font-mono"
+                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white font-mono"
               />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5 text-[#ff6b6f]" />
-                Horário Fim <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <input
-                type="time"
-                step="60"
-                required
-                value={formData.window_end}
-                onChange={(e) => setFormData({ ...formData, window_end: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2 text-sm text-white font-mono"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Tempo Estimado
-              </label>
-              <select
-                value={formData.estimated_duration_min}
-                onChange={(e) =>
-                  setFormData({ ...formData, estimated_duration_min: Number(e.target.value) })
-                }
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2 text-sm text-white"
-              >
-                <option value={30}>30 min (Isca / Vistoria)</option>
-                <option value={45}>45 min (Básico)</option>
-                <option value={60}>60 min (Instalação)</option>
-                <option value={90}>90 min (Caminhão 24V / Telemetria)</option>
-                <option value={120}>120 min (Especial / Sensores)</option>
-              </select>
             </div>
           </div>
         </div>
