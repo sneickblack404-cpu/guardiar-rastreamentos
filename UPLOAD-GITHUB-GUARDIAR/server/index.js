@@ -1,0 +1,989 @@
+const express = require('express');
+const cors = require('cors');
+const path = require('node:path');
+const { db, getLocalDateStr } = require('./db');
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+app.use(cors());
+app.use(express.json());
+
+// Helper: Haversine distance in km
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Number((R * c * 1.32).toFixed(2));
+}
+
+function getSettingsMap() {
+  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const map = {};
+  for (const r of rows) {
+    map[r.key] = r.value;
+  }
+  return map;
+}
+
+function getEnrichedAppointments(dateFilter = null, techFilter = null) {
+  let sql = `
+    SELECT
+      a.*,
+      a.contact_name AS client_name,
+      t.name AS technician_name,
+      t.badge AS technician_badge,
+      t.color AS technician_color,
+      t.fleet_vehicle AS technician_vehicle,
+      t.fleet_plate AS technician_plate,
+      t.base_lat AS technician_base_lat,
+      t.base_lng AS technician_base_lng,
+      t.base_address AS technician_base_address,
+      tr.internal_code AS tracker_code,
+      tr.brand_model AS tracker_model,
+      tr.imei AS tracker_imei,
+      tr.sim_carrier AS tracker_carrier,
+      tr.technology AS tracker_technology
+    FROM appointments a
+    LEFT JOIN technicians t ON a.technician_id = t.id
+    LEFT JOIN trackers tr ON a.tracker_id = tr.id
+    WHERE 1=1
+  `;
+  const params = [];
+  if (dateFilter) {
+    sql += ' AND a.scheduled_date = ?';
+    params.push(dateFilter);
+  }
+  if (techFilter && techFilter !== 'ALL' && techFilter !== 'ALL_DAY') {
+    sql += ' AND a.technician_id = ?';
+    params.push(Number(techFilter));
+  }
+  sql += ' ORDER BY a.scheduled_date ASC, CASE WHEN a.route_order > 0 THEN a.route_order ELSE 999 END ASC, a.window_start ASC, a.scheduled_time ASC';
+  return db.prepare(sql).all(...params);
+}
+
+function buildGoogleMapsRouteUrl(originLat, originLng, stops, returnToBase = false) {
+  if (!stops || stops.length === 0) return null;
+  const origin = `${originLat},${originLng}`;
+  let destination = '';
+  let waypointsList = [];
+
+  if (returnToBase) {
+    destination = origin;
+    waypointsList = stops.map((s) => `${s.lat},${s.lng}`);
+  } else {
+    const last = stops[stops.length - 1];
+    destination = `${last.lat},${last.lng}`;
+    waypointsList = stops.slice(0, -1).map((s) => `${s.lat},${s.lng}`);
+  }
+
+  const params = new URLSearchParams({
+    api: '1',
+    origin,
+    destination,
+    travelmode: 'driving',
+  });
+  if (waypointsList.length > 0) {
+    params.set('waypoints', waypointsList.join('|'));
+  }
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
+// POST /api/login - Authenticate internal operator (David, Sarah, Jennifer) OR Field Technician (password: 1234)
+app.post('/api/login', (req, res) => {
+  try {
+    const { username = '', password = '', loginType = 'operator', technicianId = null } = req.body || {};
+
+    if (String(password).trim() !== '1234') {
+      return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+    }
+
+    if (loginType === 'technician') {
+      let tech = null;
+      if (technicianId) {
+        tech = db.prepare('SELECT * FROM technicians WHERE id = ?').get(Number(technicianId));
+      }
+      if (!tech && username) {
+        const q = String(username).trim().toLowerCase();
+        const allTechs = db.prepare('SELECT * FROM technicians ORDER BY id ASC').all();
+        tech = allTechs.find(
+          (t) =>
+            t.badge.toLowerCase() === q ||
+            t.name.toLowerCase() === q ||
+            t.name.toLowerCase().includes(q)
+        );
+      }
+
+      if (!tech) {
+        return res.status(401).json({ error: 'Técnico não encontrado.' });
+      }
+
+      return res.json({
+        user: {
+          id: `tech-${tech.id}`,
+          technician_id: tech.id,
+          accountType: 'TECHNICIAN',
+          name: tech.name,
+          username: tech.badge,
+          role: `Técnico de Campo • ${tech.region}`,
+          badge: tech.badge,
+          department: tech.fleet_vehicle,
+          color: tech.color,
+        },
+      });
+    }
+
+    const user = db
+      .prepare('SELECT id, username, role, badge, department, password FROM users WHERE LOWER(username) = LOWER(?) AND active = 1')
+      .get(String(username).trim());
+
+    if (!user || String(user.password) !== String(password).trim()) {
+      return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+    }
+
+    res.json({
+      user: {
+        id: user.id,
+        accountType: 'OPERATOR',
+        name: user.username,
+        username: user.username,
+        role: user.role,
+        badge: user.badge,
+        department: user.department,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/bootstrap
+app.get('/api/bootstrap', (req, res) => {
+  try {
+    const settings = getSettingsMap();
+    const users = db
+      .prepare('SELECT id, username as name, username, role, badge, department FROM users WHERE active = 1 ORDER BY id ASC')
+      .all();
+    const technicians = db
+      .prepare('SELECT * FROM technicians ORDER BY id ASC')
+      .all()
+      .map((t) => ({
+        ...t,
+        skills: JSON.parse(t.skills || '[]'),
+      }));
+    const trackers = db.prepare('SELECT * FROM trackers ORDER BY id ASC').all();
+    const appointments = getEnrichedAppointments();
+
+    res.json({
+      today: getLocalDateStr(0),
+      settings,
+      employees: users,
+      technicians,
+      trackers,
+      appointments,
+    });
+  } catch (err) {
+    console.error('Error in /api/bootstrap:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/settings
+app.put('/api/settings', (req, res) => {
+  try {
+    const updates = req.body || {};
+    const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    for (const [k, v] of Object.entries(updates)) {
+      stmt.run(k, String(v ?? ''));
+    }
+    res.json({ settings: getSettingsMap() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/appointments - Create internal OS with free-text fields and any hour/minute window
+app.post('/api/appointments', (req, res) => {
+  try {
+    const {
+      contact_name = '',
+      contact_phone = '',
+      vehicle_plate = '',
+      vehicle_model = '',
+      technician_id = null,
+      tracker_id = null,
+      service_type = 'INSTALACAO',
+      priority = 'NORMAL',
+      status = 'AGENDADO',
+      scheduled_date,
+      window_start = '08:00',
+      window_end = '10:00',
+      scheduled_time,
+      estimated_duration_min = 60,
+      address,
+      neighborhood = '',
+      city = 'São Paulo',
+      state = 'SP',
+      cep = '',
+      lat,
+      lng,
+      onsite_authorized_person = '',
+      install_hidden_spot = '',
+      internal_notes = '',
+      created_by = 'David',
+    } = req.body;
+
+    const lastOs = db.prepare('SELECT id FROM appointments ORDER BY id DESC LIMIT 1').get();
+    const nextNum = 1001 + (lastOs ? lastOs.id : 0);
+    const os_number = `OS-2026-${nextNum}`;
+
+    const computedTimeWindow = `${window_start} - ${window_end}`;
+    const computedScheduledTime = scheduled_time || window_start || '08:00';
+    const computedStatus = status || 'AGENDADO';
+
+    let routeOrder = 0;
+    if (technician_id) {
+      const maxRow = db
+        .prepare('SELECT COALESCE(MAX(route_order), 0) AS max_order FROM appointments WHERE technician_id = ? AND scheduled_date = ?')
+        .get(Number(technician_id), scheduled_date);
+      routeOrder = (maxRow?.max_order || 0) + 1;
+    }
+
+    const result = db.prepare(`
+      INSERT INTO appointments (
+        os_number, contact_name, contact_phone, vehicle_plate, vehicle_model,
+        technician_id, tracker_id, service_type, priority, status,
+        scheduled_date, window_start, window_end, time_window, scheduled_time,
+        estimated_duration_min, address, neighborhood, city, state, cep,
+        lat, lng, onsite_authorized_person, install_hidden_spot,
+        route_order, internal_notes, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      os_number,
+      contact_name.trim(),
+      contact_phone.trim(),
+      vehicle_plate.toUpperCase().trim(),
+      vehicle_model.trim(),
+      technician_id ? Number(technician_id) : null,
+      tracker_id ? Number(tracker_id) : null,
+      service_type,
+      priority,
+      computedStatus,
+      scheduled_date,
+      window_start,
+      window_end,
+      computedTimeWindow,
+      computedScheduledTime,
+      Number(estimated_duration_min) || 60,
+      address,
+      neighborhood,
+      city,
+      state,
+      cep,
+      Number(lat) || -23.5505,
+      Number(lng) || -46.6333,
+      onsite_authorized_person || contact_name,
+      install_hidden_spot,
+      routeOrder,
+      internal_notes,
+      created_by
+    );
+
+    const created = getEnrichedAppointments().find((a) => a.id === Number(result.lastInsertRowid));
+    res.status(201).json({ appointment: created });
+  } catch (err) {
+    console.error('Error creating appointment:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/appointments/:id - Update OS
+app.put('/api/appointments/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Ordem de Serviço não encontrada.' });
+    }
+
+    const {
+      contact_name = existing.contact_name,
+      contact_phone = existing.contact_phone,
+      vehicle_plate = existing.vehicle_plate,
+      vehicle_model = existing.vehicle_model,
+      technician_id = existing.technician_id,
+      tracker_id = existing.tracker_id,
+      service_type = existing.service_type,
+      priority = existing.priority,
+      status = existing.status,
+      scheduled_date = existing.scheduled_date,
+      window_start = existing.window_start || '08:00',
+      window_end = existing.window_end || '10:00',
+      scheduled_time,
+      estimated_duration_min = existing.estimated_duration_min,
+      address = existing.address,
+      neighborhood = existing.neighborhood,
+      city = existing.city,
+      state = existing.state,
+      cep = existing.cep,
+      lat = existing.lat,
+      lng = existing.lng,
+      onsite_authorized_person = existing.onsite_authorized_person,
+      install_hidden_spot = existing.install_hidden_spot,
+      route_order = existing.route_order,
+      internal_notes = existing.internal_notes,
+    } = req.body;
+
+    const computedTimeWindow = `${window_start} - ${window_end}`;
+    const computedScheduledTime = scheduled_time || window_start || existing.scheduled_time;
+
+    db.prepare(`
+      UPDATE appointments SET
+        contact_name = ?, contact_phone = ?, vehicle_plate = ?, vehicle_model = ?,
+        technician_id = ?, tracker_id = ?, service_type = ?, priority = ?, status = ?,
+        scheduled_date = ?, window_start = ?, window_end = ?, time_window = ?, scheduled_time = ?,
+        estimated_duration_min = ?, address = ?, neighborhood = ?, city = ?, state = ?, cep = ?,
+        lat = ?, lng = ?, onsite_authorized_person = ?, install_hidden_spot = ?,
+        route_order = ?, internal_notes = ?,
+        completed_at = CASE WHEN ? = 'CONCLUIDO' AND completed_at IS NULL THEN datetime('now', 'localtime') ELSE completed_at END
+      WHERE id = ?
+    `).run(
+      contact_name.trim(),
+      contact_phone.trim(),
+      vehicle_plate.toUpperCase().trim(),
+      vehicle_model.trim(),
+      technician_id ? Number(technician_id) : null,
+      tracker_id ? Number(tracker_id) : null,
+      service_type,
+      priority,
+      status,
+      scheduled_date,
+      window_start,
+      window_end,
+      computedTimeWindow,
+      computedScheduledTime,
+      Number(estimated_duration_min) || 60,
+      address,
+      neighborhood,
+      city,
+      state,
+      cep,
+      Number(lat),
+      Number(lng),
+      onsite_authorized_person,
+      install_hidden_spot,
+      Number(route_order || 0),
+      internal_notes,
+      status,
+      id
+    );
+
+    const updated = getEnrichedAppointments().find((a) => a.id === id);
+    res.json({ appointment: updated });
+  } catch (err) {
+    console.error('Error updating appointment:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/appointments/:id/status - Quick status or technician assignment/unassignment
+app.patch('/api/appointments/:id/status', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { status, technician_id, route_order, install_hidden_spot, internal_notes } = req.body;
+    const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ error: 'OS não encontrada' });
+
+    const newTechId =
+      technician_id !== undefined
+        ? technician_id
+          ? Number(technician_id)
+          : null
+        : existing.technician_id;
+
+    let newStatus = status || existing.status;
+    if (technician_id !== undefined && newTechId && existing.status === 'PENDENTE_ROTA' && !status) {
+      newStatus = 'AGENDADO';
+    }
+
+    let newOrder = route_order !== undefined ? Number(route_order) : existing.route_order;
+    if (newTechId && newOrder === 0) {
+      const maxRow = db
+        .prepare('SELECT COALESCE(MAX(route_order), 0) AS max_order FROM appointments WHERE technician_id = ? AND scheduled_date = ? AND id != ?')
+        .get(newTechId, existing.scheduled_date, id);
+      newOrder = (maxRow?.max_order || 0) + 1;
+    } else if (!newTechId && technician_id === null) {
+      newOrder = 0;
+    }
+
+    db.prepare(`
+      UPDATE appointments SET
+        status = ?,
+        technician_id = ?,
+        route_order = ?,
+        install_hidden_spot = COALESCE(?, install_hidden_spot),
+        internal_notes = COALESCE(?, internal_notes),
+        completed_at = CASE WHEN ? = 'CONCLUIDO' THEN datetime('now', 'localtime') ELSE completed_at END
+      WHERE id = ?
+    `).run(
+      newStatus,
+      newTechId,
+      newOrder,
+      install_hidden_spot !== undefined ? install_hidden_spot : null,
+      internal_notes !== undefined ? internal_notes : null,
+      newStatus,
+      id
+    );
+
+    const updated = getEnrichedAppointments().find((a) => a.id === id);
+    res.json({ appointment: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/appointments/:id
+app.delete('/api/appointments/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    db.prepare('DELETE FROM appointments WHERE id = ?').run(id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/routes/optimize - Optimize route for a technician OR for all appointments of the day
+app.post('/api/routes/optimize', (req, res) => {
+  try {
+    const {
+      date,
+      technician_id, // number or 'ALL_DAY'
+      mode = 'time_window_proximity',
+      origin_type = 'tech_base',
+      return_to_base = false,
+      custom_order_ids = null,
+    } = req.body;
+
+    const settings = getSettingsMap();
+    let tech = null;
+    if (technician_id && technician_id !== 'ALL_DAY' && technician_id !== 'ALL') {
+      tech = db.prepare('SELECT * FROM technicians WHERE id = ?').get(Number(technician_id));
+    }
+
+    const useCompanyHq = !tech || origin_type === 'company_hq';
+    const originLat = useCompanyHq ? Number(settings.hq_lat || -23.5218) : tech.base_lat;
+    const originLng = useCompanyHq ? Number(settings.hq_lng || -46.6692) : tech.base_lng;
+    const originAddress = useCompanyHq ? settings.hq_address : tech.base_address;
+    const originLabel = useCompanyHq ? settings.hq_name : `Base: ${tech.name}`;
+
+    const allTechApps = getEnrichedAppointments(
+      date,
+      tech ? tech.id : null
+    ).filter((a) => a.status !== 'CANCELADO');
+
+    if (allTechApps.length === 0) {
+      return res.json({
+        origin: { lat: originLat, lng: originLng, address: originAddress, label: originLabel },
+        stops: [],
+        metrics: { total_distance_km: 0, total_drive_min: 0, total_service_min: 0, total_day_min: 0 },
+        google_maps_url: null,
+      });
+    }
+
+    let orderedStops = [];
+
+    if (Array.isArray(custom_order_ids) && custom_order_ids.length > 0) {
+      const mapById = new Map(allTechApps.map((a) => [a.id, a]));
+      for (const id of custom_order_ids) {
+        if (mapById.has(Number(id))) {
+          orderedStops.push(mapById.get(Number(id)));
+          mapById.delete(Number(id));
+        }
+      }
+      for (const rem of mapById.values()) {
+        orderedStops.push(rem);
+      }
+    } else if (mode === 'proximity') {
+      const remaining = [...allTechApps];
+      let curLat = originLat;
+      let curLng = originLng;
+      while (remaining.length > 0) {
+        let bestIdx = 0;
+        let bestDist = Infinity;
+        for (let i = 0; i < remaining.length; i++) {
+          const d = haversineKm(curLat, curLng, remaining[i].lat, remaining[i].lng);
+          if (d < bestDist) {
+            bestDist = d;
+            bestIdx = i;
+          }
+        }
+        const chosen = remaining.splice(bestIdx, 1)[0];
+        orderedStops.push(chosen);
+        curLat = chosen.lat;
+        curLng = chosen.lng;
+      }
+    } else {
+      // 'time_window_proximity': Group by hour bucket of window_start, then Nearest Neighbor
+      const parseMinutes = (tStr = '08:00') => {
+        const [h, m] = String(tStr).split(':').map(Number);
+        return (isNaN(h) ? 8 : h) * 60 + (isNaN(m) ? 0 : m);
+      };
+
+      const buckets = new Map();
+      for (const appItem of allTechApps) {
+        const startMin = parseMinutes(appItem.window_start || appItem.scheduled_time);
+        // Group into 90-minute buckets so nearby appointments in similar windows are optimized geographically
+        const bucketKey = Math.floor(startMin / 90);
+        if (!buckets.has(bucketKey)) buckets.set(bucketKey, []);
+        buckets.get(bucketKey).push(appItem);
+      }
+
+      const sortedKeys = [...buckets.keys()].sort((a, b) => a - b);
+      let curLat = originLat;
+      let curLng = originLng;
+
+      for (const k of sortedKeys) {
+        const group = buckets.get(k);
+        while (group.length > 0) {
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let i = 0; i < group.length; i++) {
+            const d = haversineKm(curLat, curLng, group[i].lat, group[i].lng);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = i;
+            }
+          }
+          const chosen = group.splice(bestIdx, 1)[0];
+          orderedStops.push(chosen);
+          curLat = chosen.lat;
+          curLng = chosen.lng;
+        }
+      }
+    }
+
+    const updateOrderStmt = db.prepare('UPDATE appointments SET route_order = ? WHERE id = ?');
+    orderedStops.forEach((stop, idx) => {
+      stop.route_order = idx + 1;
+      updateOrderStmt.run(idx + 1, stop.id);
+    });
+
+    const avgSpeedKmh = Number(settings.default_urban_speed_kmh || 28);
+    const bufferMin = Number(settings.buffer_between_os_min || 15);
+    const workdayStart = settings.workday_start || '08:00';
+    const [startH, startM] = workdayStart.split(':').map(Number);
+    let currentMinutesOfDay = startH * 60 + startM;
+
+    const formatTimeMin = (totalMin) => {
+      const h = Math.floor(totalMin / 60) % 24;
+      const m = Math.round(totalMin % 60);
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    };
+
+    let prevLat = originLat;
+    let prevLng = originLng;
+    let totalDistanceKm = 0;
+    let totalDriveMin = 0;
+    let totalServiceMin = 0;
+
+    const enrichedStops = orderedStops.map((stop, idx) => {
+      const legDistanceKm = haversineKm(prevLat, prevLng, stop.lat, stop.lng);
+      const legDriveMin = Math.max(8, Math.round((legDistanceKm / avgSpeedKmh) * 60));
+
+      currentMinutesOfDay += legDriveMin;
+      const etaArrival = formatTimeMin(currentMinutesOfDay);
+
+      const startStr = stop.window_start || stop.scheduled_time || '08:00';
+      const [schedH, schedM] = startStr.split(':').map(Number);
+      const schedMin = (isNaN(schedH) ? 8 : schedH) * 60 + (isNaN(schedM) ? 0 : schedM);
+      const startServiceMin = Math.max(currentMinutesOfDay, schedMin - 15);
+      const finishServiceMin = startServiceMin + (stop.estimated_duration_min || 60);
+      const etaDeparture = formatTimeMin(finishServiceMin);
+
+      let windowEndMin = schedMin + 120;
+      if (stop.window_end) {
+        const [eh, em] = stop.window_end.split(':').map(Number);
+        if (!isNaN(eh)) windowEndMin = eh * 60 + (em || 0);
+      }
+      const isLateWarning = currentMinutesOfDay > windowEndMin;
+
+      currentMinutesOfDay = finishServiceMin + bufferMin;
+      prevLat = stop.lat;
+      prevLng = stop.lng;
+
+      totalDistanceKm += legDistanceKm;
+      totalDriveMin += legDriveMin;
+      totalServiceMin += stop.estimated_duration_min || 60;
+
+      const singleStopGoogleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originLat},${originLng}&destination=${stop.lat},${stop.lng}&travelmode=driving`;
+
+      return {
+        ...stop,
+        stop_number: idx + 1,
+        leg_distance_km: legDistanceKm,
+        leg_drive_min: legDriveMin,
+        eta_arrival: etaArrival,
+        eta_departure: etaDeparture,
+        is_late_warning: isLateWarning,
+        google_maps_nav_url: singleStopGoogleMapsUrl,
+      };
+    });
+
+    let returnLegKm = 0;
+    let returnLegMin = 0;
+    if (return_to_base && enrichedStops.length > 0) {
+      returnLegKm = haversineKm(prevLat, prevLng, originLat, originLng);
+      returnLegMin = Math.max(8, Math.round((returnLegKm / avgSpeedKmh) * 60));
+      totalDistanceKm += returnLegKm;
+      totalDriveMin += returnLegMin;
+    }
+
+    const googleMapsUrl = buildGoogleMapsRouteUrl(originLat, originLng, enrichedStops, return_to_base);
+
+    res.json({
+      origin: {
+        lat: originLat,
+        lng: originLng,
+        address: originAddress,
+        label: originLabel,
+      },
+      technician: tech
+        ? {
+            ...tech,
+            skills: JSON.parse(tech.skills || '[]'),
+          }
+        : null,
+      stops: enrichedStops,
+      return_to_base: {
+        enabled: Boolean(return_to_base),
+        distance_km: Number(returnLegKm.toFixed(2)),
+        drive_min: returnLegMin,
+      },
+      metrics: {
+        total_distance_km: Number(totalDistanceKm.toFixed(2)),
+        total_drive_min: totalDriveMin,
+        total_service_min: totalServiceMin,
+        total_day_min: totalDriveMin + totalServiceMin,
+      },
+      google_maps_url: googleMapsUrl,
+    });
+  } catch (err) {
+    console.error('Error optimizing route:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// CRUD Technicians (including DELETE to remove technician!)
+app.post('/api/technicians', (req, res) => {
+  try {
+    const {
+      name,
+      badge,
+      internal_phone,
+      fleet_vehicle,
+      fleet_plate,
+      region,
+      base_address,
+      base_lat = -23.5505,
+      base_lng = -46.6333,
+      color = '#12303e',
+      skills = ['12V', 'Rastreamento'],
+      status = 'DISPONIVEL',
+      max_daily_os = 6,
+    } = req.body;
+
+    const result = db.prepare(`
+      INSERT INTO technicians (name, badge, internal_phone, fleet_vehicle, fleet_plate, region, base_address, base_lat, base_lng, color, skills, status, max_daily_os)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      name,
+      badge,
+      internal_phone,
+      fleet_vehicle,
+      fleet_plate,
+      region,
+      base_address,
+      Number(base_lat),
+      Number(base_lng),
+      color,
+      JSON.stringify(Array.isArray(skills) ? skills : [skills]),
+      status,
+      Number(max_daily_os)
+    );
+
+    const created = db.prepare('SELECT * FROM technicians WHERE id = ?').get(Number(result.lastInsertRowid));
+    res.status(201).json({
+      technician: { ...created, skills: JSON.parse(created.skills || '[]') },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/technicians/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const existing = db.prepare('SELECT * FROM technicians WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ error: 'Técnico não encontrado' });
+
+    const {
+      name = existing.name,
+      badge = existing.badge,
+      internal_phone = existing.internal_phone,
+      fleet_vehicle = existing.fleet_vehicle,
+      fleet_plate = existing.fleet_plate,
+      region = existing.region,
+      base_address = existing.base_address,
+      base_lat = existing.base_lat,
+      base_lng = existing.base_lng,
+      color = existing.color,
+      skills,
+      status = existing.status,
+      max_daily_os = existing.max_daily_os,
+    } = req.body;
+
+    const skillsJson = skills ? JSON.stringify(Array.isArray(skills) ? skills : [skills]) : existing.skills;
+
+    db.prepare(`
+      UPDATE technicians SET
+        name = ?, badge = ?, internal_phone = ?, fleet_vehicle = ?, fleet_plate = ?,
+        region = ?, base_address = ?, base_lat = ?, base_lng = ?, color = ?,
+        skills = ?, status = ?, max_daily_os = ?
+      WHERE id = ?
+    `).run(
+      name,
+      badge,
+      internal_phone,
+      fleet_vehicle,
+      fleet_plate,
+      region,
+      base_address,
+      Number(base_lat),
+      Number(base_lng),
+      color,
+      skillsJson,
+      status,
+      Number(max_daily_os),
+      id
+    );
+
+    const updated = db.prepare('SELECT * FROM technicians WHERE id = ?').get(id);
+    res.json({ technician: { ...updated, skills: JSON.parse(updated.skills || '[]') } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/technicians/:id - Remove technician and unlink appointments
+app.delete('/api/technicians/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    db.prepare('UPDATE appointments SET technician_id = NULL, route_order = 0 WHERE technician_id = ?').run(id);
+    db.prepare('DELETE FROM technicians WHERE id = ?').run(id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// CRUD Trackers
+app.post('/api/trackers', (req, res) => {
+  try {
+    const {
+      internal_code,
+      brand_model,
+      imei,
+      sim_iccid,
+      sim_carrier,
+      technology = '4G Rastreamento',
+      status = 'DISPONIVEL',
+      notes = '',
+    } = req.body;
+
+    const result = db.prepare(`
+      INSERT INTO trackers (internal_code, brand_model, imei, sim_iccid, sim_carrier, technology, status, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(internal_code, brand_model, imei, sim_iccid, sim_carrier, technology, status, notes);
+
+    const created = db.prepare('SELECT * FROM trackers WHERE id = ?').get(Number(result.lastInsertRowid));
+    res.status(201).json({ tracker: created });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/trackers/:id', (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const existing = db.prepare('SELECT * FROM trackers WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ error: 'Equipamento não encontrado' });
+
+    const {
+      internal_code = existing.internal_code,
+      brand_model = existing.brand_model,
+      imei = existing.imei,
+      sim_iccid = existing.sim_iccid,
+      sim_carrier = existing.sim_carrier,
+      technology = existing.technology,
+      status = existing.status,
+      assigned_vehicle_plate = existing.assigned_vehicle_plate,
+      notes = existing.notes,
+    } = req.body;
+
+    db.prepare(`
+      UPDATE trackers SET
+        internal_code = ?, brand_model = ?, imei = ?, sim_iccid = ?,
+        sim_carrier = ?, technology = ?, status = ?, assigned_vehicle_plate = ?, notes = ?
+      WHERE id = ?
+    `).run(internal_code, brand_model, imei, sim_iccid, sim_carrier, technology, status, assigned_vehicle_plate, notes, id);
+
+    const updated = db.prepare('SELECT * FROM trackers WHERE id = ?').get(id);
+    res.json({ tracker: updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Known São Paulo / Grande SP coordinates fallback dictionary
+const SP_GEO_DICTIONARY = [
+  { match: ['paulista', 'bela vista', '01310'], lat: -23.5629, lng: -46.6544 },
+  { match: ['funchal', 'vila olimpia', 'vila olímpia', '04551'], lat: -23.5952, lng: -46.6890 },
+  { match: ['nacoes unidas', 'nações unidas', 'brooklin', 'berrini', '04578'], lat: -23.6095, lng: -46.6968 },
+  { match: ['pinheiros', 'cardeal arcoverde', 'faria lima', '05407'], lat: -23.5612, lng: -46.6914 },
+  { match: ['ibirapuera', 'moema', '04028'], lat: -23.6048, lng: -46.6629 },
+  { match: ['tatuape', 'tatuapé', 'tuiuti', 'celso garcia', '03307'], lat: -23.5415, lng: -46.5712 },
+  { match: ['barra funda', 'marques de sao vicente', 'marquês de são vicente', 'lapa', '01139'], lat: -23.5218, lng: -46.6692 },
+  { match: ['guarulhos', 'paulo faccini', 'macedo', '07111'], lat: -23.4648, lng: -46.5262 },
+  { match: ['sao bernardo', 'são bernardo', 'pereira barreto', 'kennedy', '09751'], lat: -23.6795, lng: -46.5482 },
+  { match: ['santo andre', 'santo andré', 'industrial'], lat: -23.6542, lng: -46.5333 },
+  { match: ['santana', 'cruzeiro do sul', 'zona norte', 'tucuruvi'], lat: -23.5019, lng: -46.6247 },
+  { match: ['santo amaro', 'interlagos', 'washington luis', 'jurubatuba'], lat: -23.6531, lng: -46.7082 },
+  { match: ['vila mariana', 'domingos de morais', 'ipiranga'], lat: -23.5881, lng: -46.6345 },
+  { match: ['osasco', 'autonomistas'], lat: -23.5325, lng: -46.7917 },
+  { match: ['barueri', 'alphaville'], lat: -23.5026, lng: -46.8548 },
+];
+
+// GET /api/geocode
+app.get('/api/geocode', async (req, res) => {
+  try {
+    const { q = '', cep = '' } = req.query;
+    const settings = getSettingsMap();
+    const googleApiKey = settings.google_maps_api_key || '';
+
+    let addressData = {
+      address: q,
+      neighborhood: '',
+      city: 'São Paulo',
+      state: 'SP',
+      cep: cep,
+      lat: null,
+      lng: null,
+      source: 'fallback',
+    };
+
+    const cleanCep = String(cep).replace(/\D/g, '');
+    if (cleanCep.length === 8) {
+      try {
+        const viaRes = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+        if (viaRes.ok) {
+          const viaJson = await viaRes.json();
+          if (!viaJson.erro) {
+            addressData.address = viaJson.logradouro || q;
+            addressData.neighborhood = viaJson.bairro || '';
+            addressData.city = viaJson.localidade || 'São Paulo';
+            addressData.state = viaJson.uf || 'SP';
+            addressData.cep = viaJson.cep || cep;
+          }
+        }
+      } catch (_e) {
+        // Ignore
+      }
+    }
+
+    const searchQuery = [addressData.address || q, addressData.neighborhood, addressData.city, addressData.state, 'Brasil']
+      .filter(Boolean)
+      .join(', ');
+
+    if (googleApiKey && searchQuery) {
+      try {
+        const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchQuery)}&key=${encodeURIComponent(googleApiKey)}`;
+        const gRes = await fetch(gUrl);
+        if (gRes.ok) {
+          const gData = await gRes.json();
+          if (gData.status === 'OK' && gData.results?.[0]?.geometry?.location) {
+            addressData.lat = gData.results[0].geometry.location.lat;
+            addressData.lng = gData.results[0].geometry.location.lng;
+            addressData.source = 'google_maps';
+          }
+        }
+      } catch (_e) {
+        // Fallback
+      }
+    }
+
+    if (!addressData.lat && searchQuery) {
+      try {
+        const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(searchQuery)}`;
+        const nomRes = await fetch(nomUrl, {
+          headers: { 'User-Agent': 'GuardiarRastreamentosInternal/1.0' },
+        });
+        if (nomRes.ok) {
+          const nomData = await nomRes.json();
+          if (Array.isArray(nomData) && nomData.length > 0) {
+            addressData.lat = parseFloat(nomData[0].lat);
+            addressData.lng = parseFloat(nomData[0].lon);
+            addressData.source = 'nominatim_osm';
+          }
+        }
+      } catch (_e) {
+        // Fallback
+      }
+    }
+
+    if (!addressData.lat) {
+      const normalized = `${searchQuery} ${cleanCep}`.toLowerCase();
+      const matched = SP_GEO_DICTIONARY.find((entry) =>
+        entry.match.some((kw) => normalized.includes(kw))
+      );
+      if (matched) {
+        const jitterLat = (Math.random() - 0.5) * 0.003;
+        const jitterLng = (Math.random() - 0.5) * 0.003;
+        addressData.lat = Number((matched.lat + jitterLat).toFixed(6));
+        addressData.lng = Number((matched.lng + jitterLng).toFixed(6));
+        addressData.source = 'sp_dictionary';
+      } else {
+        addressData.lat = -23.5505;
+        addressData.lng = -46.6333;
+        addressData.source = 'sp_center_default';
+      }
+    }
+
+    res.json(addressData);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const distPath = path.join(__dirname, '..', 'dist');
+app.use(express.static(distPath));
+
+// SPA Fallback for production build
+app.use((req, res, next) => {
+  if (req.method === 'GET' && !req.path.startsWith('/api')) {
+    const indexHtml = path.join(distPath, 'index.html');
+    return res.sendFile(indexHtml, (err) => {
+      if (err) next();
+    });
+  }
+  next();
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[Guardiar Rastreamentos Backend] Servidor interno rodando na porta ${PORT}`);
+});

@@ -1,0 +1,17 @@
+{
+  "name": "Guardiar Rastreamentos",
+  "short_name": "Guardiar",
+  "description": "Sistema Interno de Agendamento e Rotas - Guardiar Rastreamentos",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b1d26",
+  "theme_color": "#12303e",
+  "icons": [
+    {
+      "src": "/logo-guardiar.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
