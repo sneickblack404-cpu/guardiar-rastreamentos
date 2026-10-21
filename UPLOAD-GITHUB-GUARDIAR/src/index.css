@@ -26,10 +26,38 @@
   background: #e31e24;
 }
 
-/* Leaflet overrides for Guardiar Petrol dark UI */
+/* Leaflet overrides for Guardiar Petrol dark UI - Isolated z-index so map never overlaps modals/tabs */
 .leaflet-container {
   font-family: 'Inter', sans-serif !important;
   background: #0d222c !important;
+  position: relative !important;
+  z-index: 0 !important;
+  isolation: isolate !important;
+}
+.leaflet-pane {
+  z-index: 10 !important;
+}
+.leaflet-tile-pane {
+  z-index: 10 !important;
+}
+.leaflet-overlay-pane {
+  z-index: 20 !important;
+}
+.leaflet-shadow-pane {
+  z-index: 25 !important;
+}
+.leaflet-marker-pane {
+  z-index: 30 !important;
+}
+.leaflet-tooltip-pane {
+  z-index: 35 !important;
+}
+.leaflet-popup-pane {
+  z-index: 40 !important;
+}
+.leaflet-top,
+.leaflet-bottom {
+  z-index: 45 !important;
 }
 .leaflet-popup-content-wrapper {
   background: #0f2834 !important;

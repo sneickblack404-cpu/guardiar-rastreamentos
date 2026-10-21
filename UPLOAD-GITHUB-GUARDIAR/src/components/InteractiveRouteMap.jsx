@@ -27,8 +27,8 @@ export default function InteractiveRouteMap({
   useEffect(() => {
     if (!mapContainerRef.current || leafletMapRef.current) return;
 
-    const initialLat = origin?.lat || -23.5505;
-    const initialLng = origin?.lng || -46.6333;
+    const initialLat = origin?.lat || -19.87404;
+    const initialLng = origin?.lng || -43.98780;
 
     const map = L.map(mapContainerRef.current, {
       center: [initialLat, initialLng],
@@ -381,9 +381,9 @@ export default function InteractiveRouteMap({
   }, [origin, stops, unassignedStops, allTechniciansMode, technicians, activeTechColor, returnToBase]);
 
   return (
-    <div className="relative rounded-xl overflow-hidden border border-[#1f495d] bg-[#0f2834] shadow-xl">
+    <div className="relative isolate z-0 rounded-xl overflow-hidden border border-[#1f495d] bg-[#0f2834] shadow-xl">
       {/* Top Overlay Toolbar */}
-      <div className="absolute top-3 left-12 right-3 z-[400] flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+      <div className="absolute top-3 left-12 right-3 z-20 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
         <div className="pointer-events-auto flex items-center gap-1 bg-[#0b1d26]/95 backdrop-blur-md border border-[#1f495d] rounded-lg p-1 shadow-lg">
           <span className="flex items-center gap-1 text-[11px] font-medium text-slate-300 px-2">
             <Layers className="w-3.5 h-3.5 text-[#e31e24]" />

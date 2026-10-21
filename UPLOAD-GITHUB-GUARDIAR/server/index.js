@@ -207,8 +207,187 @@ app.put('/api/settings', (req, res) => {
   }
 });
 
-// POST /api/appointments - Create internal OS with free-text fields and any hour/minute window
-app.post('/api/appointments', (req, res) => {
+// Known Minas Gerais (BH & Região Metropolitana) coordinates fallback dictionary
+const MG_GEO_DICTIONARY = [
+  { match: ['sena madureira', 'ouro preto', '31330'], lat: -19.87404, lng: -43.98780 },
+  { match: ['joao gomide leite', 'joão gomide leite'], lat: -19.90559, lng: -44.02287 },
+  { match: ['canelinha'], lat: -19.90512, lng: -44.01951 },
+  { match: ['pindorama', '30865', 'coqueiros', 'gloria', 'glória', 'alipio de melo', 'alípio de melo'], lat: -19.9055, lng: -44.0210 },
+  { match: ['castelo', 'fleming', 'serrano', 'santa terezinha', 'itamarati'], lat: -19.8825, lng: -43.9991 },
+  { match: ['pampulha', 'sao luiz', 'são luiz', 'bandeirantes', 'itapoa', 'itapoã', 'planalto'], lat: -19.8588, lng: -43.9729 },
+  { match: ['padre eustaquio', 'padre eustáquio', 'caicara', 'caiçara', 'carlos prates', 'coreu'], lat: -19.9145, lng: -43.9789 },
+  { match: ['savassi', 'funcionarios', 'funcionários', 'contorno', 'lourdes', 'sion', 'anchieta', '30110'], lat: -19.9386, lng: -43.9352 },
+  { match: ['centro', 'afonso pena', 'amazonas', 'barro preto', 'santa efigenia', 'santa efigênia', 'floresta', '30130'], lat: -19.9191, lng: -43.9386 },
+  { match: ['venda nova', 'padre pedro pinto', 'mantiqueira', 'ceu azul', 'céu azul', '31510'], lat: -19.8157, lng: -43.9542 },
+  { match: ['barreiro', 'sinfronio brochado', 'milionarios', 'milionários', 'lindeia', '30640'], lat: -19.9748, lng: -44.0145 },
+  { match: ['buritis', 'raja gabaglia', 'estoril', 'palmeiras', 'belvedere', '30455'], lat: -19.9712, lng: -43.9658 },
+  { match: ['cidade nova', 'cristiano machado', 'uniao', 'união', 'ipiranga', 'sagrada familia', 'sagrada família'], lat: -19.8889, lng: -43.9278 },
+  { match: ['contagem', 'eldorado', 'industrial', 'nacional', 'ressaca', '32310'], lat: -19.9462, lng: -44.0341 },
+  { match: ['betim', 'alterosas', 'ptb', '32600'], lat: -19.9677, lng: -44.1984 },
+  { match: ['esmeraldas', '35740'], lat: -19.7625, lng: -44.3139 },
+  { match: ['ribeirao das neves', 'ribeirão das neves', 'justinopolis', 'justinópolis'], lat: -19.7669, lng: -44.0867 },
+  { match: ['santa luzia', 'sao benedito', 'são benedito'], lat: -19.7697, lng: -43.8514 },
+  { match: ['sabara', 'sabará'], lat: -19.8844, lng: -43.8067 },
+  { match: ['ibirite', 'ibirité', 'sarzedo', 'mario campos', 'mário campos'], lat: -20.0219, lng: -44.0589 },
+  { match: ['nova lima', 'vila da serra', 'jardim canada', 'jardim canadá'], lat: -19.9856, lng: -43.8467 },
+  { match: ['lagoa santa', 'vespasiano', 'confins', 'pedro leopoldo'], lat: -19.6292, lng: -43.8897 },
+  { match: ['sete lagoas'], lat: -19.4658, lng: -44.2467 },
+];
+
+async function queryNominatim(queryStr) {
+  if (!queryStr || !queryStr.trim()) return null;
+  try {
+    const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(queryStr)}`;
+    const nomRes = await fetch(nomUrl, {
+      headers: { 'User-Agent': 'GuardiarRastreamentosInternal/2.0' },
+    });
+    if (nomRes.ok) {
+      const nomData = await nomRes.json();
+      if (Array.isArray(nomData) && nomData.length > 0) {
+        return {
+          lat: parseFloat(nomData[0].lat),
+          lng: parseFloat(nomData[0].lon),
+        };
+      }
+    }
+  } catch (_e) {
+    // ignore
+  }
+  return null;
+}
+
+async function resolveAddressCoordinates({
+  address = '',
+  neighborhood = '',
+  city = 'Belo Horizonte',
+  state = 'MG',
+  cep = '',
+}) {
+  const settings = getSettingsMap();
+  const googleApiKey = settings.google_maps_api_key || '';
+
+  const effectiveCity =
+    !city || city.toLowerCase() === 'são paulo' || city.toLowerCase() === 'sao paulo'
+      ? 'Belo Horizonte'
+      : city;
+  const effectiveState = !state || state.toUpperCase() === 'SP' ? 'MG' : state.toUpperCase();
+
+  let addressData = {
+    address: address,
+    neighborhood: neighborhood,
+    city: effectiveCity,
+    state: effectiveState,
+    cep: cep,
+    lat: null,
+    lng: null,
+    source: 'fallback',
+  };
+
+  // 1. ViaCEP lookup if 8-digit CEP is provided
+  const cleanCep = String(cep || '').replace(/\D/g, '');
+  if (cleanCep.length === 8) {
+    try {
+      const viaRes = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+      if (viaRes.ok) {
+        const viaJson = await viaRes.json();
+        if (!viaJson.erro) {
+          if (!addressData.address) addressData.address = viaJson.logradouro || '';
+          if (!addressData.neighborhood) addressData.neighborhood = viaJson.bairro || '';
+          addressData.city = viaJson.localidade || addressData.city;
+          addressData.state = viaJson.uf || addressData.state;
+          addressData.cep = viaJson.cep || cep;
+        }
+      }
+    } catch (_e) {
+      // Ignore ViaCEP error
+    }
+  }
+
+  // Strip house numbers and complements to also have a clean street name fallback
+  const streetOnly = String(addressData.address || '')
+    .replace(/,\s*\d+.*$/g, '')
+    .replace(/\s+\d+.*$/g, '')
+    .trim();
+
+  const fullQuery = [addressData.address, addressData.neighborhood, addressData.city, addressData.state, 'Brasil']
+    .filter(Boolean)
+    .join(', ');
+
+  // 2. Google Maps Geocoding API if key is set
+  if (googleApiKey && fullQuery) {
+    try {
+      const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(fullQuery)}&key=${encodeURIComponent(googleApiKey)}`;
+      const gRes = await fetch(gUrl);
+      if (gRes.ok) {
+        const gData = await gRes.json();
+        if (gData.status === 'OK' && gData.results?.[0]?.geometry?.location) {
+          addressData.lat = gData.results[0].geometry.location.lat;
+          addressData.lng = gData.results[0].geometry.location.lng;
+          addressData.source = 'google_maps';
+          return addressData;
+        }
+      }
+    } catch (_e) {
+      // Fallback
+    }
+  }
+
+  // 3. Dictionary quick check for exact known streets/neighborhoods in BH/MG
+  const normalizedAll = `${addressData.address} ${addressData.neighborhood} ${addressData.city} ${cleanCep}`
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  // 4. Nominatim multi-step queries (Full -> Street without number -> Neighborhood -> City)
+  const candidateQueries = [
+    fullQuery,
+    streetOnly && streetOnly !== addressData.address
+      ? [streetOnly, addressData.neighborhood, addressData.city, addressData.state, 'Brasil'].filter(Boolean).join(', ')
+      : null,
+    streetOnly
+      ? [streetOnly, addressData.city, addressData.state, 'Brasil'].filter(Boolean).join(', ')
+      : null,
+    addressData.neighborhood
+      ? [addressData.neighborhood, addressData.city, addressData.state, 'Brasil'].filter(Boolean).join(', ')
+      : null,
+    [addressData.city, addressData.state, 'Brasil'].filter(Boolean).join(', '),
+  ].filter(Boolean);
+
+  for (const qStr of candidateQueries) {
+    const found = await queryNominatim(qStr);
+    if (found && found.lat && found.lng) {
+      addressData.lat = Number(found.lat.toFixed(6));
+      addressData.lng = Number(found.lng.toFixed(6));
+      addressData.source = 'nominatim_osm';
+      return addressData;
+    }
+  }
+
+  // 5. Fallback to MG dictionary
+  const matched = MG_GEO_DICTIONARY.find((entry) =>
+    entry.match.some((kw) => {
+      const cleanKw = kw.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      return normalizedAll.includes(cleanKw);
+    })
+  );
+
+  if (matched) {
+    const jitterLat = (Math.random() - 0.5) * 0.0015;
+    const jitterLng = (Math.random() - 0.5) * 0.0015;
+    addressData.lat = Number((matched.lat + jitterLat).toFixed(6));
+    addressData.lng = Number((matched.lng + jitterLng).toFixed(6));
+    addressData.source = 'mg_dictionary';
+  } else {
+    addressData.lat = Number(settings.hq_lat || -19.87404);
+    addressData.lng = Number(settings.hq_lng || -43.98780);
+    addressData.source = 'bh_base_default';
+  }
+
+  return addressData;
+}
+
+// POST /api/appointments - Create internal OS with automatic MG geocoding
+app.post('/api/appointments', async (req, res) => {
   try {
     const {
       contact_name = '',
@@ -225,10 +404,10 @@ app.post('/api/appointments', (req, res) => {
       window_end = '10:00',
       scheduled_time,
       estimated_duration_min = 60,
-      address,
+      address = '',
       neighborhood = '',
-      city = 'São Paulo',
-      state = 'SP',
+      city = 'Belo Horizonte',
+      state = 'MG',
       cep = '',
       lat,
       lng,
@@ -252,6 +431,32 @@ app.post('/api/appointments', (req, res) => {
         .prepare('SELECT COALESCE(MAX(route_order), 0) AS max_order FROM appointments WHERE technician_id = ? AND scheduled_date = ?')
         .get(Number(technician_id), scheduled_date);
       routeOrder = (maxRow?.max_order || 0) + 1;
+    }
+
+    // Automatically geocode if lat/lng is missing, is in SP (-23.x), or equals the default base coordinates
+    let finalLat = Number(lat);
+    let finalLng = Number(lng);
+    let finalCity = !city || city === 'São Paulo' ? 'Belo Horizonte' : city;
+    let finalState = !state || state === 'SP' ? 'MG' : state;
+
+    const isDefaultOrSpCoord =
+      !finalLat ||
+      !finalLng ||
+      finalLat < -22.0 ||
+      (Math.abs(finalLat - -19.87404) < 0.0002 && Math.abs(finalLng - -43.98780) < 0.0002);
+
+    if (isDefaultOrSpCoord && (address || neighborhood || cep)) {
+      const geo = await resolveAddressCoordinates({
+        address,
+        neighborhood,
+        city: finalCity,
+        state: finalState,
+        cep,
+      });
+      finalLat = geo.lat || -19.87404;
+      finalLng = geo.lng || -43.98780;
+      finalCity = geo.city || finalCity;
+      finalState = geo.state || finalState;
     }
 
     const result = db.prepare(`
@@ -282,11 +487,11 @@ app.post('/api/appointments', (req, res) => {
       Number(estimated_duration_min) || 60,
       address,
       neighborhood,
-      city,
-      state,
+      finalCity,
+      finalState,
       cep,
-      Number(lat) || -23.5505,
-      Number(lng) || -46.6333,
+      finalLat || -19.87404,
+      finalLng || -43.98780,
       onsite_authorized_person || contact_name,
       install_hidden_spot,
       routeOrder,
@@ -302,8 +507,8 @@ app.post('/api/appointments', (req, res) => {
   }
 });
 
-// PUT /api/appointments/:id - Update OS
-app.put('/api/appointments/:id', (req, res) => {
+// PUT /api/appointments/:id - Update OS with automatic MG geocoding
+app.put('/api/appointments/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const existing = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
@@ -342,6 +547,39 @@ app.put('/api/appointments/:id', (req, res) => {
     const computedTimeWindow = `${window_start} - ${window_end}`;
     const computedScheduledTime = scheduled_time || window_start || existing.scheduled_time;
 
+    let finalLat = Number(lat);
+    let finalLng = Number(lng);
+    let finalCity = !city || city === 'São Paulo' ? 'Belo Horizonte' : city;
+    let finalState = !state || state === 'SP' ? 'MG' : state;
+
+    const addressChanged =
+      address !== existing.address ||
+      neighborhood !== existing.neighborhood ||
+      cep !== existing.cep ||
+      city !== existing.city;
+
+    const isSpOrDefault =
+      !finalLat ||
+      !finalLng ||
+      finalLat < -22.0 ||
+      (Math.abs(finalLat - -19.87404) < 0.0002 && Math.abs(finalLng - -43.98780) < 0.0002);
+
+    if ((addressChanged || isSpOrDefault) && (address || neighborhood || cep)) {
+      const geo = await resolveAddressCoordinates({
+        address,
+        neighborhood,
+        city: finalCity,
+        state: finalState,
+        cep,
+      });
+      if (geo.lat && geo.lng) {
+        finalLat = geo.lat;
+        finalLng = geo.lng;
+        finalCity = geo.city || finalCity;
+        finalState = geo.state || finalState;
+      }
+    }
+
     db.prepare(`
       UPDATE appointments SET
         contact_name = ?, contact_phone = ?, vehicle_plate = ?, vehicle_model = ?,
@@ -370,11 +608,11 @@ app.put('/api/appointments/:id', (req, res) => {
       Number(estimated_duration_min) || 60,
       address,
       neighborhood,
-      city,
-      state,
+      finalCity,
+      finalState,
       cep,
-      Number(lat),
-      Number(lng),
+      finalLat,
+      finalLng,
       onsite_authorized_person,
       install_hidden_spot,
       Number(route_order || 0),
@@ -477,8 +715,8 @@ app.post('/api/routes/optimize', (req, res) => {
     }
 
     const useCompanyHq = !tech || origin_type === 'company_hq';
-    const originLat = useCompanyHq ? Number(settings.hq_lat || -23.5218) : tech.base_lat;
-    const originLng = useCompanyHq ? Number(settings.hq_lng || -46.6692) : tech.base_lng;
+    const originLat = useCompanyHq ? Number(settings.hq_lat || -19.87404) : tech.base_lat;
+    const originLng = useCompanyHq ? Number(settings.hq_lng || -43.98780) : tech.base_lng;
     const originAddress = useCompanyHq ? settings.hq_address : tech.base_address;
     const originLabel = useCompanyHq ? settings.hq_name : `Base: ${tech.name}`;
 
@@ -538,7 +776,6 @@ app.post('/api/routes/optimize', (req, res) => {
       const buckets = new Map();
       for (const appItem of allTechApps) {
         const startMin = parseMinutes(appItem.window_start || appItem.scheduled_time);
-        // Group into 90-minute buckets so nearby appointments in similar windows are optimized geographically
         const bucketKey = Math.floor(startMin / 90);
         if (!buckets.has(bucketKey)) buckets.set(bucketKey, []);
         buckets.get(bucketKey).push(appItem);
@@ -689,9 +926,9 @@ app.post('/api/technicians', (req, res) => {
       fleet_vehicle,
       fleet_plate,
       region,
-      base_address,
-      base_lat = -23.5505,
-      base_lng = -46.6333,
+      base_address = 'Rua Sena Madureira, 253 - Ouro Preto, Belo Horizonte - MG',
+      base_lat = -19.87404,
+      base_lng = -43.98780,
       color = '#12303e',
       skills = ['12V', 'Rastreamento'],
       status = 'DISPONIVEL',
@@ -850,125 +1087,59 @@ app.put('/api/trackers/:id', (req, res) => {
   }
 });
 
-// Known São Paulo / Grande SP coordinates fallback dictionary
-const SP_GEO_DICTIONARY = [
-  { match: ['paulista', 'bela vista', '01310'], lat: -23.5629, lng: -46.6544 },
-  { match: ['funchal', 'vila olimpia', 'vila olímpia', '04551'], lat: -23.5952, lng: -46.6890 },
-  { match: ['nacoes unidas', 'nações unidas', 'brooklin', 'berrini', '04578'], lat: -23.6095, lng: -46.6968 },
-  { match: ['pinheiros', 'cardeal arcoverde', 'faria lima', '05407'], lat: -23.5612, lng: -46.6914 },
-  { match: ['ibirapuera', 'moema', '04028'], lat: -23.6048, lng: -46.6629 },
-  { match: ['tatuape', 'tatuapé', 'tuiuti', 'celso garcia', '03307'], lat: -23.5415, lng: -46.5712 },
-  { match: ['barra funda', 'marques de sao vicente', 'marquês de são vicente', 'lapa', '01139'], lat: -23.5218, lng: -46.6692 },
-  { match: ['guarulhos', 'paulo faccini', 'macedo', '07111'], lat: -23.4648, lng: -46.5262 },
-  { match: ['sao bernardo', 'são bernardo', 'pereira barreto', 'kennedy', '09751'], lat: -23.6795, lng: -46.5482 },
-  { match: ['santo andre', 'santo andré', 'industrial'], lat: -23.6542, lng: -46.5333 },
-  { match: ['santana', 'cruzeiro do sul', 'zona norte', 'tucuruvi'], lat: -23.5019, lng: -46.6247 },
-  { match: ['santo amaro', 'interlagos', 'washington luis', 'jurubatuba'], lat: -23.6531, lng: -46.7082 },
-  { match: ['vila mariana', 'domingos de morais', 'ipiranga'], lat: -23.5881, lng: -46.6345 },
-  { match: ['osasco', 'autonomistas'], lat: -23.5325, lng: -46.7917 },
-  { match: ['barueri', 'alphaville'], lat: -23.5026, lng: -46.8548 },
-];
-
 // GET /api/geocode
 app.get('/api/geocode', async (req, res) => {
   try {
-    const { q = '', cep = '' } = req.query;
-    const settings = getSettingsMap();
-    const googleApiKey = settings.google_maps_api_key || '';
+    const {
+      q = '',
+      address = '',
+      neighborhood = '',
+      city = 'Belo Horizonte',
+      state = 'MG',
+      cep = '',
+    } = req.query;
 
-    let addressData = {
-      address: q,
-      neighborhood: '',
-      city: 'São Paulo',
-      state: 'SP',
-      cep: cep,
-      lat: null,
-      lng: null,
-      source: 'fallback',
-    };
-
-    const cleanCep = String(cep).replace(/\D/g, '');
-    if (cleanCep.length === 8) {
-      try {
-        const viaRes = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
-        if (viaRes.ok) {
-          const viaJson = await viaRes.json();
-          if (!viaJson.erro) {
-            addressData.address = viaJson.logradouro || q;
-            addressData.neighborhood = viaJson.bairro || '';
-            addressData.city = viaJson.localidade || 'São Paulo';
-            addressData.state = viaJson.uf || 'SP';
-            addressData.cep = viaJson.cep || cep;
-          }
-        }
-      } catch (_e) {
-        // Ignore
-      }
-    }
-
-    const searchQuery = [addressData.address || q, addressData.neighborhood, addressData.city, addressData.state, 'Brasil']
-      .filter(Boolean)
-      .join(', ');
-
-    if (googleApiKey && searchQuery) {
-      try {
-        const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchQuery)}&key=${encodeURIComponent(googleApiKey)}`;
-        const gRes = await fetch(gUrl);
-        if (gRes.ok) {
-          const gData = await gRes.json();
-          if (gData.status === 'OK' && gData.results?.[0]?.geometry?.location) {
-            addressData.lat = gData.results[0].geometry.location.lat;
-            addressData.lng = gData.results[0].geometry.location.lng;
-            addressData.source = 'google_maps';
-          }
-        }
-      } catch (_e) {
-        // Fallback
-      }
-    }
-
-    if (!addressData.lat && searchQuery) {
-      try {
-        const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(searchQuery)}`;
-        const nomRes = await fetch(nomUrl, {
-          headers: { 'User-Agent': 'GuardiarRastreamentosInternal/1.0' },
-        });
-        if (nomRes.ok) {
-          const nomData = await nomRes.json();
-          if (Array.isArray(nomData) && nomData.length > 0) {
-            addressData.lat = parseFloat(nomData[0].lat);
-            addressData.lng = parseFloat(nomData[0].lon);
-            addressData.source = 'nominatim_osm';
-          }
-        }
-      } catch (_e) {
-        // Fallback
-      }
-    }
-
-    if (!addressData.lat) {
-      const normalized = `${searchQuery} ${cleanCep}`.toLowerCase();
-      const matched = SP_GEO_DICTIONARY.find((entry) =>
-        entry.match.some((kw) => normalized.includes(kw))
-      );
-      if (matched) {
-        const jitterLat = (Math.random() - 0.5) * 0.003;
-        const jitterLng = (Math.random() - 0.5) * 0.003;
-        addressData.lat = Number((matched.lat + jitterLat).toFixed(6));
-        addressData.lng = Number((matched.lng + jitterLng).toFixed(6));
-        addressData.source = 'sp_dictionary';
-      } else {
-        addressData.lat = -23.5505;
-        addressData.lng = -46.6333;
-        addressData.source = 'sp_center_default';
-      }
-    }
+    const addressData = await resolveAddressCoordinates({
+      address: address || q,
+      neighborhood,
+      city,
+      state,
+      cep,
+    });
 
     res.json(addressData);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Auto-fix any appointments in DB that were saved with SP coordinates (-23.x)
+async function fixMisplacedAppointmentsOnStartup() {
+  try {
+    const rows = db.prepare('SELECT * FROM appointments WHERE lat < -21.5').all();
+    for (const r of rows) {
+      const geo = await resolveAddressCoordinates({
+        address: r.address,
+        neighborhood: r.neighborhood,
+        city: 'Belo Horizonte',
+        state: 'MG',
+        cep: r.cep,
+      });
+      if (geo.lat && geo.lng) {
+        db.prepare('UPDATE appointments SET lat = ?, lng = ?, city = ?, state = ? WHERE id = ?').run(
+          geo.lat,
+          geo.lng,
+          geo.city || 'Belo Horizonte',
+          geo.state || 'MG',
+          r.id
+        );
+      }
+    }
+  } catch (_e) {
+    // ignore
+  }
+}
+fixMisplacedAppointmentsOnStartup();
 
 const distPath = path.join(__dirname, '..', 'dist');
 app.use(express.static(distPath));

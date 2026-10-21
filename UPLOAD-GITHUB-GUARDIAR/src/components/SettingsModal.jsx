@@ -6,8 +6,8 @@ export default function SettingsModal({ isOpen, onClose, settings = {}, onSaveSe
     company_name: '',
     hq_name: '',
     hq_address: '',
-    hq_lat: '-23.5218',
-    hq_lng: '-46.6692',
+    hq_lat: '-19.87404',
+    hq_lng: '-43.98780',
     google_maps_api_key: '',
     default_urban_speed_kmh: '28',
     buffer_between_os_min: '15',
@@ -21,10 +21,10 @@ export default function SettingsModal({ isOpen, onClose, settings = {}, onSaveSe
     if (isOpen && settings) {
       setForm({
         company_name: settings.company_name || 'Guardiar Rastreamentos',
-        hq_name: settings.hq_name || 'Matriz Operacional Guardiar',
-        hq_address: settings.hq_address || '',
-        hq_lat: settings.hq_lat || '-23.5218',
-        hq_lng: settings.hq_lng || '-46.6692',
+        hq_name: settings.hq_name || 'Base Guardiar - Ouro Preto (BH)',
+        hq_address: settings.hq_address || 'Rua Sena Madureira, 253 - Ouro Preto, Belo Horizonte - MG',
+        hq_lat: settings.hq_lat || '-19.87404',
+        hq_lng: settings.hq_lng || '-43.98780',
         google_maps_api_key: settings.google_maps_api_key || '',
         default_urban_speed_kmh: settings.default_urban_speed_kmh || '28',
         buffer_between_os_min: settings.buffer_between_os_min || '15',
@@ -48,7 +48,7 @@ export default function SettingsModal({ isOpen, onClose, settings = {}, onSaveSe
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#071319]/85 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#071319]/85 backdrop-blur-sm p-4">
       <div className="bg-[#0f2834] border border-[#1f495d] rounded-2xl max-w-2xl w-full p-6 space-y-5 shadow-2xl">
         <div className="flex items-center justify-between border-b border-[#1f495d] pb-3">
           <div className="flex items-center gap-2.5">

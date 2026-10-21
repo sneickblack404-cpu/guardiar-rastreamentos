@@ -112,10 +112,10 @@ export default function TechnicianPortalView({
   }, [selectedDate, techProfile?.id, includeUnassigned, myDayAppointments.length]);
 
   const originPoint = {
-    lat: techProfile?.base_lat || Number(settings.hq_lat || -23.5218),
-    lng: techProfile?.base_lng || Number(settings.hq_lng || -46.6692),
+    lat: techProfile?.base_lat || Number(settings.hq_lat || -19.87404),
+    lng: techProfile?.base_lng || Number(settings.hq_lng || -43.98780),
     label: `Ponto de Partida: ${techProfile?.name || 'Base Guardiar'}`,
-    address: techProfile?.base_address || settings.hq_address || '',
+    address: techProfile?.base_address || settings.hq_address || 'Rua Sena Madureira, 253 - Ouro Preto, Belo Horizonte - MG',
   };
 
   // Enrich visible appointments with ETA/distance from routeData if available

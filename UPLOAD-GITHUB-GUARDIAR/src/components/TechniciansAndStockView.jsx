@@ -33,9 +33,9 @@ export default function TechniciansAndStockView({
     fleet_vehicle: '',
     fleet_plate: '',
     region: '',
-    base_address: '',
-    base_lat: -23.5218,
-    base_lng: -46.6692,
+    base_address: 'Rua Sena Madureira, 253 - Ouro Preto, Belo Horizonte - MG',
+    base_lat: -19.87404,
+    base_lng: -43.98780,
     color: '#e31e24',
     skills: '12V, 24V Caminhão, Telemetria, Isca RF',
     status: 'DISPONIVEL',
@@ -62,13 +62,13 @@ export default function TechniciansAndStockView({
     setTechForm({
       name: '',
       badge: `TEC-0${technicians.length + 1}`,
-      internal_phone: '(11) 99105-0000',
+      internal_phone: '(31) 99105-0000',
       fleet_vehicle: 'Fiat Fiorino Endurance',
       fleet_plate: 'GRD-5E05',
-      region: 'Zona Sul & Centro',
-      base_address: 'Av. Marquês de São Vicente, 1619 - Barra Funda, São Paulo - SP',
-      base_lat: -23.5218,
-      base_lng: -46.6692,
+      region: 'Belo Horizonte & Região',
+      base_address: 'Rua Sena Madureira, 253 - Ouro Preto, Belo Horizonte - MG',
+      base_lat: -19.87404,
+      base_lng: -43.98780,
       color: '#e31e24',
       skills: '12V, Instalação, Isca RF',
       status: 'DISPONIVEL',
@@ -279,7 +279,7 @@ export default function TechniciansAndStockView({
 
         {/* Modal Technician */}
         {showTechModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#071319]/85 backdrop-blur-sm p-4">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#071319]/85 backdrop-blur-sm p-4">
             <div className="bg-[#0f2834] border border-[#1f495d] rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl">
               <h3 className="text-base font-bold text-white">
                 {editingTech ? `Editar Técnico ${editingTech.name}` : 'Cadastrar Técnico Instalador Interno'}
@@ -585,7 +585,7 @@ export default function TechniciansAndStockView({
 
       {/* Tracker Modal */}
       {showTrackerModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#071319]/85 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-[#071319]/85 backdrop-blur-sm p-4">
           <div className="bg-[#0f2834] border border-[#1f495d] rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-white">
               {editingTracker

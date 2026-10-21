@@ -1,23 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  LayoutDashboard,
   Calendar,
+  CalendarPlus,
   Route,
   Users,
-  Cpu,
   Settings,
   Plus,
   Search,
   MapPin,
-  Clock,
-  CheckCircle2,
-  AlertTriangle,
-  Navigation,
-  Columns,
-  Table,
-  Lock,
   LogOut,
+  Menu,
+  Eye,
+  ExternalLink,
   Trash2,
+  UserCheck,
 } from 'lucide-react';
 import LoginScreen from './components/LoginScreen';
 import InteractiveRouteMap from './components/InteractiveRouteMap';
@@ -28,7 +24,6 @@ import TechnicianPortalView from './components/TechnicianPortalView';
 import SettingsModal from './components/SettingsModal';
 import {
   STATUS_CONFIG,
-  SERVICE_TYPES,
   formatDateBR,
   getSinglePointGoogleMapsUrl,
 } from './utils/constants';
@@ -43,24 +38,24 @@ export default function App() {
     }
   });
 
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'agenda' | 'routes' | 'technicians' | 'stock'
-  const [agendaViewMode, setAgendaViewMode] = useState('list'); // 'list' | 'timeline' | 'kanban'
+  // Main navigation: 'agendamentos' | 'agendar' | 'routes' | 'technicians'
+  const [activeTab, setActiveTab] = useState('agendamentos');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState('');
   const [todayDate, setTodayDate] = useState('');
+
+  // Filters on Agendamentos table (matching reference screenshot)
+  const [dateFilter, setDateFilter] = useState(''); // empty = show all dates by default like reference table
+  const [ufFilter, setUfFilter] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Data state from SQLite Backend
   const [settings, setSettings] = useState({});
   const [technicians, setTechnicians] = useState([]);
   const [trackers, setTrackers] = useState([]);
   const [appointments, setAppointments] = useState([]);
-
-  // Filters for Agenda view
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('ALL');
-  const [techFilter, setTechFilter] = useState('ALL');
-  const [showAllDatesInList, setShowAllDatesInList] = useState(false);
 
   // Modals state
   const [isOsModalOpen, setIsOsModalOpen] = useState(false);
@@ -124,6 +119,10 @@ export default function App() {
       });
     }
     await fetchBootstrapData();
+    if (payload.scheduled_date) {
+      setSelectedDate(payload.scheduled_date);
+    }
+    setActiveTab('agendamentos');
   };
 
   const handleDeleteAppointment = async (id) => {
@@ -188,11 +187,6 @@ export default function App() {
     await fetchBootstrapData();
   };
 
-  const openNewOsModal = (prefill = null) => {
-    setEditingOs(prefill);
-    setIsOsModalOpen(true);
-  };
-
   const openEditOsModal = (osItem) => {
     setEditingOs(osItem);
     setIsOsModalOpen(true);
@@ -209,7 +203,7 @@ export default function App() {
         <div className="text-center space-y-3">
           <div className="w-10 h-10 border-4 border-[#e31e24] border-t-transparent rounded-full animate-spin mx-auto" />
           <p className="text-sm text-slate-300 font-medium">
-            Iniciando Guardiar Rastreamentos (Agendamento & Roteirização)...
+            Carregando Guardiar Rastreamentos...
           </p>
         </div>
       </div>
@@ -220,49 +214,22 @@ export default function App() {
   if (authenticatedUser.accountType === 'TECHNICIAN') {
     return (
       <div className="min-h-screen bg-[#0b1d26] text-slate-100 flex flex-col">
-        <div className="bg-[#08151c] border-b border-[#193d4f] px-6 py-1.5 text-[11px] flex flex-wrap items-center justify-between gap-2 no-print">
-          <div className="flex items-center gap-2 text-slate-300">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#e31e24]/20 text-[#ff8589] border border-[#e31e24]/40 font-bold uppercase tracking-wider">
-              <Lock className="w-3 h-3" />
-              Acesso Exclusivo do Técnico
-            </span>
-            <span className="hidden md:inline text-slate-400">
-              Guardiar Rastreamentos • Portal Interno de Campo
-            </span>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <span className="text-slate-300">
-              Técnico Logado: <strong className="text-white">{authenticatedUser.name}</strong>{' '}
-              <span className="text-slate-400">({authenticatedUser.badge})</span>
-            </span>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-[#163848] hover:bg-[#e31e24] text-slate-200 hover:text-white font-semibold transition cursor-pointer"
-            >
-              <LogOut className="w-3 h-3" />
-              Sair
-            </button>
-          </div>
-        </div>
-
-        <header className="bg-[#12303e]/95 backdrop-blur border-b border-[#1f495d] px-6 py-3.5 sticky top-0 z-30 no-print shadow-xl">
+        <header className="bg-[#12303e] border-b border-[#1f495d] px-6 py-3 sticky top-0 z-50 no-print shadow-lg">
           <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5">
-              <div className="bg-white px-3 py-1.5 rounded-xl shadow-md border-2 border-[#e31e24] flex items-center justify-center">
+            <div className="flex items-center gap-3">
+              <div className="bg-white px-2.5 py-1 rounded-lg shadow border border-[#e31e24] flex items-center justify-center">
                 <img
                   src="/logo-guardiar.png"
                   alt="Guardiar Rastreamentos"
-                  className="h-10 w-auto object-contain"
+                  className="h-8 w-auto object-contain"
                 />
               </div>
               <div>
-                <h1 className="text-lg font-extrabold tracking-tight text-white">
+                <h1 className="text-base font-extrabold tracking-tight text-white">
                   GUARDIAR <span className="text-[#ff6b6f]">RASTREAMENTOS</span>
                 </h1>
-                <p className="text-xs text-slate-300">
-                  Agenda Diária do Técnico, Dados dos Clientes, Controle de Conclusão e Rota Google Maps
+                <p className="text-[11px] text-slate-300">
+                  Portal do Técnico • {authenticatedUser.name}
                 </p>
               </div>
             </div>
@@ -270,10 +237,10 @@ export default function App() {
             <button
               type="button"
               onClick={handleLogout}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#163848] hover:bg-[#e31e24] text-slate-100 text-xs font-bold border border-[#24536a] transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#163848] hover:bg-[#e31e24] text-slate-100 text-xs font-bold border border-[#24536a] transition cursor-pointer"
             >
-              <LogOut className="w-4 h-4" />
-              Trocar Usuário / Sair
+              <LogOut className="w-3.5 h-3.5" />
+              Sair
             </button>
           </div>
         </header>
@@ -295,627 +262,496 @@ export default function App() {
     );
   }
 
-  const dateAppointments = appointments.filter(
-    (a) => a.scheduled_date === selectedDate && a.status !== 'CANCELADO'
-  );
-  const completedCount = dateAppointments.filter((a) => a.status === 'CONCLUIDO').length;
-  const inProgressCount = dateAppointments.filter(
-    (a) => a.status === 'EM_EXECUCAO' || a.status === 'EM_DESLOCAMENTO'
-  ).length;
-  const unassignedCount = dateAppointments.filter((a) => !a.technician_id).length;
-  const availableTrackersCount = trackers.filter((t) => t.status === 'DISPONIVEL').length;
-
-  const filteredAgendaAppointments = appointments.filter((a) => {
-    if (!showAllDatesInList && a.scheduled_date !== selectedDate) return false;
-    if (statusFilter !== 'ALL' && a.status !== statusFilter) return false;
-    if (techFilter !== 'ALL') {
-      if (techFilter === 'UNASSIGNED' && a.technician_id) return false;
-      if (techFilter !== 'UNASSIGNED' && String(a.technician_id) !== String(techFilter)) return false;
+  // Filter appointments for the clean Agendamentos table
+  const filteredAppointments = appointments.filter((a) => {
+    if (dateFilter && a.scheduled_date !== dateFilter) return false;
+    if (ufFilter && String(a.state || 'MG').toUpperCase() !== ufFilter.toUpperCase().trim()) {
+      return false;
     }
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       return (
-        a.os_number.toLowerCase().includes(q) ||
         (a.contact_name || a.client_name || '').toLowerCase().includes(q) ||
-        a.vehicle_plate.toLowerCase().includes(q) ||
-        a.vehicle_model.toLowerCase().includes(q) ||
-        a.neighborhood.toLowerCase().includes(q)
+        (a.vehicle_plate || '').toLowerCase().includes(q) ||
+        (a.vehicle_model || '').toLowerCase().includes(q) ||
+        (a.city || '').toLowerCase().includes(q) ||
+        (a.neighborhood || '').toLowerCase().includes(q) ||
+        (a.address || '').toLowerCase().includes(q)
       );
     }
     return true;
   });
 
+  // Appointments to show on the operational map (either filtered by dateFilter or all active)
+  const mapAppointments = filteredAppointments.filter((a) => a.status !== 'CANCELADO');
+
+  const navItems = [
+    { id: 'agendamentos', label: 'Agendamentos', icon: Calendar },
+    { id: 'agendar', label: 'Agendar serviço', icon: CalendarPlus },
+    { id: 'routes', label: 'Mapa & Rotas', icon: Route },
+    { id: 'technicians', label: 'Técnicos', icon: Users },
+  ];
+
   return (
-    <div className="min-h-screen bg-[#0b1d26] text-slate-100 flex flex-col">
-      {/* Restricted Internal System Security Banner */}
-      <div className="bg-[#08151c] border-b border-[#193d4f] px-6 py-1.5 text-[11px] flex flex-wrap items-center justify-between gap-2 no-print">
-        <div className="flex items-center gap-2 text-slate-300">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#e31e24]/20 text-[#ff8589] border border-[#e31e24]/40 font-bold uppercase tracking-wider">
-            <Lock className="w-3 h-3" />
-            Acesso Exclusivo Interno
-          </span>
-          <span className="hidden md:inline text-slate-400">
-            Guardiar Rastreamentos • Sistema exclusivo para colaboradores internos.
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <span className="text-slate-300">
-            Operador Logado: <strong className="text-white">{authenticatedUser.name}</strong>{' '}
-            <span className="text-slate-400">({authenticatedUser.role})</span>
-          </span>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-[#163848] hover:bg-[#e31e24] text-slate-200 hover:text-white font-semibold transition cursor-pointer"
-          >
-            <LogOut className="w-3 h-3" />
-            Sair
-          </button>
-        </div>
-      </div>
-
-      {/* Main Header Bar */}
-      <header className="bg-[#12303e]/95 backdrop-blur border-b border-[#1f495d] px-6 py-3.5 sticky top-0 z-30 no-print shadow-xl">
-        <div className="max-w-[1600px] mx-auto flex flex-wrap items-center justify-between gap-4">
-          {/* Guardiar Brand Logo */}
-          <div className="flex items-center gap-3.5">
-            <div className="bg-white px-3 py-1.5 rounded-xl shadow-md border-2 border-[#e31e24] flex items-center justify-center">
-              <img
-                src="/logo-guardiar.png"
-                alt="Guardiar Rastreamentos"
-                className="h-10 w-auto object-contain"
-              />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-extrabold tracking-tight text-white">
-                  GUARDIAR <span className="text-[#ff6b6f]">RASTREAMENTOS</span>
-                </h1>
+    <div className="min-h-screen bg-[#0b1d26] text-slate-100 flex">
+      {/* Left Sidebar (Clean & Simple like reference screenshot, with Guardiar colors) */}
+      <aside
+        className={`${
+          sidebarOpen ? 'w-60' : 'w-0 -ml-60 lg:ml-0 lg:w-20'
+        } bg-[#0f2834] border-r border-[#1f495d] flex flex-col transition-all duration-200 shrink-0 z-40 no-print`}
+      >
+        {/* Brand Logo Header */}
+        <div className="h-16 px-4 border-b border-[#1f495d] flex items-center gap-3">
+          <div className="bg-white px-2.5 py-1 rounded-lg shadow border border-[#e31e24] flex items-center justify-center shrink-0">
+            <img
+              src="/logo-guardiar.png"
+              alt="Guardiar"
+              className="h-7 w-auto object-contain"
+            />
+          </div>
+          {sidebarOpen && (
+            <div className="overflow-hidden">
+              <div className="text-sm font-extrabold tracking-tight text-white truncate">
+                GUARDIAR
               </div>
-              <p className="text-xs text-slate-300">
-                Central Interna de Agendamento de Serviços e Planejamento de Rotas Google Maps
-              </p>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-[#ff6b6f] truncate">
+                Rastreamentos
+              </div>
             </div>
-          </div>
-
-          {/* Global Date Selector & Quick Actions */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center bg-[#0b1d26] border border-[#24536a] rounded-lg p-1">
-              <button
-                type="button"
-                onClick={() => setSelectedDate(todayDate)}
-                className={`px-2.5 py-1 rounded text-xs font-semibold transition cursor-pointer ${
-                  selectedDate === todayDate
-                    ? 'bg-[#e31e24] text-white'
-                    : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                Hoje
-              </button>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="bg-transparent px-2.5 py-1 text-xs text-white font-mono focus:outline-none"
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={() => openNewOsModal(null)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#e31e24] hover:bg-[#c8191e] text-white text-xs font-bold shadow-lg shadow-[#e31e24]/30 transition cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              Nova Ordem de Serviço (OS)
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-2 rounded-lg bg-[#163848] hover:bg-[#1e495d] text-slate-200 border border-[#24536a] transition cursor-pointer"
-              title="Configurações da Base Operacional e Chave Google Maps"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-          </div>
+          )}
         </div>
 
-        {/* Navigation Bar (Removed Clientes & Veículos tab as requested) */}
-        <div className="max-w-[1600px] mx-auto mt-3 pt-2 border-t border-[#1f495d] flex items-center gap-1.5 overflow-x-auto">
-          {[
-            { id: 'dashboard', label: 'Torre de Operações', icon: LayoutDashboard },
-            {
-              id: 'agenda',
-              label: `Agenda & OS (${dateAppointments.length})`,
-              icon: Calendar,
-            },
-            {
-              id: 'routes',
-              label: 'Planejamento de Rotas & Google Maps',
-              icon: Route,
-              highlight: true,
-            },
-            {
-              id: 'technicians',
-              label: `Técnicos de Campo (${technicians.length})`,
-              icon: Users,
-            },
-            {
-              id: 'stock',
-              label: `Estoque Rastreadores (${availableTrackersCount} disp.)`,
-              icon: Cpu,
-            },
-          ].map((tab) => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
+        {/* Navigation Menu */}
+        <div className="p-3 flex-1 space-y-1">
+          {sidebarOpen && (
+            <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+              Menu
+            </div>
+          )}
+
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
             return (
               <button
-                key={tab.id}
+                key={item.id}
                 type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
+                onClick={() => {
+                  if (item.id === 'agendar') {
+                    setEditingOs(null);
+                  }
+                  setActiveTab(item.id);
+                }}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
                   isActive
-                    ? 'bg-[#e31e24] text-white shadow'
-                    : tab.highlight
-                    ? 'bg-[#e31e24]/15 text-[#ff8589] border border-[#e31e24]/30 hover:bg-[#e31e24]/25'
+                    ? 'bg-[#e31e24] text-white shadow-md shadow-[#e31e24]/25'
                     : 'text-slate-300 hover:text-white hover:bg-[#163848]'
                 }`}
+                title={item.label}
               >
-                <Icon className="w-4 h-4" />
-                {tab.label}
+                <Icon className="w-4 h-4 shrink-0" />
+                {sidebarOpen && <span>{item.label}</span>}
               </button>
             );
           })}
         </div>
-      </header>
 
-      {/* Main Content Container */}
-      <main className="flex-1 max-w-[1600px] w-full mx-auto px-6 py-5 space-y-6">
-        {/* TAB 1: DASHBOARD / TORRE DE OPERAÇÕES */}
-        {activeTab === 'dashboard' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-4 space-y-1">
-                <div className="text-xs text-slate-300 font-medium flex items-center justify-between">
-                  <span>OS Agendadas ({formatDateBR(selectedDate)})</span>
-                  <Calendar className="w-4 h-4 text-[#ff6b6f]" />
-                </div>
-                <div className="text-2xl font-extrabold text-white font-mono">{dateAppointments.length}</div>
-                <div className="text-[11px] text-slate-400">Atendimentos programados para a data</div>
-              </div>
-
-              <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-4 space-y-1">
-                <div className="text-xs text-slate-300 font-medium flex items-center justify-between">
-                  <span>Em Execução / Deslocamento</span>
-                  <Navigation className="w-4 h-4 text-sky-400" />
-                </div>
-                <div className="text-2xl font-extrabold text-sky-400 font-mono">{inProgressCount}</div>
-                <div className="text-[11px] text-slate-400">Atendimentos em andamento</div>
-              </div>
-
-              <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-4 space-y-1">
-                <div className="text-xs text-slate-300 font-medium flex items-center justify-between">
-                  <span>Instalações Concluídas</span>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                </div>
-                <div className="text-2xl font-extrabold text-emerald-400 font-mono">{completedCount}</div>
-                <div className="text-[11px] text-slate-400">Serviços finalizados no dia</div>
-              </div>
-
-              <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-4 space-y-1">
-                <div className="text-xs text-slate-300 font-medium flex items-center justify-between">
-                  <span>Rastreadores Disponíveis</span>
-                  <Cpu className="w-4 h-4 text-amber-400" />
-                </div>
-                <div className="text-2xl font-extrabold text-amber-400 font-mono">{availableTrackersCount}</div>
-                <div className="text-[11px] text-slate-400">Módulos prontos no estoque</div>
-              </div>
+        {/* Base Fixed Info Footer in Sidebar */}
+        {sidebarOpen && (
+          <div className="p-3.5 m-3 rounded-xl bg-[#0b1d26]/90 border border-[#193d4f] text-[11px] space-y-1">
+            <div className="font-bold text-[#ff8589] flex items-center gap-1">
+              <MapPin className="w-3.5 h-3.5 text-[#e31e24]" />
+              Base Guardiar (BH - MG)
             </div>
+            <div className="text-slate-300 leading-snug">
+              {settings.hq_address || 'Rua Sena Madureira, 253 - Ouro Preto, BH - MG'}
+            </div>
+          </div>
+        )}
+      </aside>
 
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-              <div className="xl:col-span-7 space-y-3">
-                <div className="flex items-center justify-between">
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Clean Top Header Bar */}
+        <header className="h-16 bg-[#12303e] border-b border-[#1f495d] px-6 flex items-center justify-between sticky top-0 z-30 no-print shadow-md">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-[#163848] transition cursor-pointer"
+              title="Alternar Menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <h1 className="text-base font-bold text-white">
+              {activeTab === 'agendamentos' && 'Agendamentos'}
+              {activeTab === 'agendar' && 'Agendar serviço'}
+              {activeTab === 'routes' && 'Mapa & Rotas Google Maps'}
+              {activeTab === 'technicians' && 'Técnicos de Campo'}
+            </h1>
+          </div>
+
+          {/* Right User Profile & Settings */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-2 rounded-lg bg-[#163848] hover:bg-[#1e495d] text-slate-200 border border-[#24536a] transition cursor-pointer"
+              title="Configurações da Base Fixa e Google Maps"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-2.5 pl-2 border-l border-[#1f495d]">
+              <div className="text-right">
+                <div className="text-xs font-bold text-white leading-tight">
+                  {authenticatedUser.name}
+                </div>
+                <div className="text-[11px] text-slate-400 leading-tight">operador</div>
+              </div>
+              <div className="w-8 h-8 rounded-full bg-[#e31e24] text-white font-bold text-xs flex items-center justify-center shadow">
+                {authenticatedUser.name?.slice(0, 1).toUpperCase()}
+              </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-[#e31e24] transition cursor-pointer"
+                title="Sair"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {/* Page Body */}
+        <main className="flex-1 p-6 max-w-[1600px] w-full mx-auto space-y-6">
+          {/* VIEW 1: AGENDAMENTOS (Clean Table like Screenshot 4 + Guardiar Map below) */}
+          {activeTab === 'agendamentos' && (
+            <div className="space-y-6">
+              {/* Top Action & Filters Bar */}
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingOs(null);
+                      setActiveTab('agendar');
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg transition cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Novo Agendamento
+                  </button>
+                </div>
+
+                {/* Filters: Data, UF, Busca */}
+                <div className="flex flex-wrap items-end gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      Data
+                    </label>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="date"
+                        value={dateFilter}
+                        onChange={(e) => setDateFilter(e.target.value)}
+                        className="bg-[#0f2834] border border-[#24536a] rounded-lg px-3 py-1.5 text-xs text-white"
+                      />
+                      {dateFilter && (
+                        <button
+                          type="button"
+                          onClick={() => setDateFilter('')}
+                          className="px-2 py-1.5 rounded-lg bg-[#163848] hover:bg-[#1e495d] text-[11px] text-slate-200 cursor-pointer"
+                          title="Mostrar todas as datas"
+                        >
+                          Todas
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      UF
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: MG"
+                      maxLength={2}
+                      value={ufFilter}
+                      onChange={(e) => setUfFilter(e.target.value.toUpperCase())}
+                      className="w-20 bg-[#0f2834] border border-[#24536a] rounded-lg px-3 py-1.5 text-xs text-white uppercase"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      Busca
+                    </label>
+                    <div className="relative min-w-[230px]">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        placeholder="Cliente, placa, veículo, cidade..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full bg-[#0f2834] border border-[#24536a] rounded-lg pl-8 pr-3 py-1.5 text-xs text-white focus:border-[#e31e24] focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Clean Agendamentos Table (matching Screenshot 4 columns) */}
+              <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl overflow-hidden shadow-xl">
+                <div className="px-4 py-3 border-b border-[#1f495d] flex items-center justify-between text-xs text-slate-300">
+                  <span>
+                    Exibindo <strong className="text-white">{filteredAppointments.length}</strong>{' '}
+                    agendamento(s)
+                  </span>
+                  {dateFilter && (
+                    <span className="text-[#ff8589] font-semibold">
+                      Filtrado por data: {formatDateBR(dateFilter)}
+                    </span>
+                  )}
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-[#1f495d] bg-[#0b1d26]/90 text-[11px] font-bold uppercase tracking-wider text-slate-300">
+                        <th className="py-3.5 px-4">Cliente</th>
+                        <th className="py-3.5 px-4">Status</th>
+                        <th className="py-3.5 px-4">Veículo</th>
+                        <th className="py-3.5 px-4">Placa</th>
+                        <th className="py-3.5 px-4">Cidade / Endereço</th>
+                        <th className="py-3.5 px-4">Data do serviço</th>
+                        <th className="py-3.5 px-4 text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#193d4f] text-xs">
+                      {filteredAppointments.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-10 text-center text-slate-400">
+                            Nenhum agendamento encontrado. Clique em &quot;Novo Agendamento&quot; para cadastrar.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredAppointments.map((item) => {
+                          const isDone = item.status === 'CONCLUIDO';
+                          const isCanceled = item.status === 'CANCELADO';
+
+                          return (
+                            <tr
+                              key={item.id}
+                              className="hover:bg-[#163848]/45 transition"
+                            >
+                              {/* Cliente */}
+                              <td className="py-3 px-4">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditOsModal(item)}
+                                  className="font-bold text-sky-400 hover:text-sky-300 uppercase text-left cursor-pointer"
+                                >
+                                  {item.contact_name || item.client_name}
+                                </button>
+                                {item.contact_phone && (
+                                  <div className="text-[11px] text-slate-400">
+                                    {item.contact_phone}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* Status */}
+                              <td className="py-3 px-4">
+                                <select
+                                  value={item.status}
+                                  onChange={(e) => handleStatusChange(item.id, e.target.value)}
+                                  className={`px-2.5 py-1 rounded text-[11px] font-bold border cursor-pointer ${
+                                    isDone
+                                      ? 'bg-emerald-600 text-white border-emerald-500'
+                                      : isCanceled
+                                      ? 'bg-rose-600/30 text-rose-200 border-rose-500/40'
+                                      : 'bg-emerald-600/90 text-white border-emerald-500'
+                                  }`}
+                                >
+                                  <option value="AGENDADO" className="bg-[#0f2834] text-white">
+                                    Confirmado
+                                  </option>
+                                  <option value="EM_DESLOCAMENTO" className="bg-[#0f2834] text-white">
+                                    Em Deslocamento
+                                  </option>
+                                  <option value="EM_EXECUCAO" className="bg-[#0f2834] text-white">
+                                    Em Execução
+                                  </option>
+                                  <option value="CONCLUIDO" className="bg-[#0f2834] text-white">
+                                    Concluído
+                                  </option>
+                                  <option value="CANCELADO" className="bg-[#0f2834] text-white">
+                                    Cancelado
+                                  </option>
+                                </select>
+                              </td>
+
+                              {/* Veículo */}
+                              <td className="py-3 px-4 font-semibold text-white uppercase">
+                                {item.vehicle_model}
+                              </td>
+
+                              {/* Placa */}
+                              <td className="py-3 px-4 font-mono font-bold text-slate-200 uppercase">
+                                {item.vehicle_plate}
+                              </td>
+
+                              {/* Cidade / Endereço */}
+                              <td className="py-3 px-4">
+                                <div className="text-white font-medium">
+                                  {item.city || 'Belo Horizonte'} / {item.state || 'MG'}
+                                </div>
+                                <div className="text-[11px] text-slate-400 truncate max-w-[260px]">
+                                  {item.address}
+                                  {item.neighborhood ? ` — ${item.neighborhood}` : ''}
+                                </div>
+                              </td>
+
+                              {/* Data do serviço */}
+                              <td className="py-3 px-4 font-mono text-slate-200 whitespace-nowrap">
+                                {formatDateBR(item.scheduled_date)}{' '}
+                                {item.window_start || item.scheduled_time || '08:00'}
+                              </td>
+
+                              {/* Ações */}
+                              <td className="py-3 px-4 text-right whitespace-nowrap space-x-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditOsModal(item)}
+                                  className="inline-flex items-center justify-center w-8 h-7 rounded bg-emerald-600 hover:bg-emerald-500 text-white shadow transition cursor-pointer"
+                                  title="Ver / Editar Agendamento"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                                <a
+                                  href={getSinglePointGoogleMapsUrl(
+                                    item.lat,
+                                    item.lng,
+                                    `${item.address}, ${item.neighborhood || ''}, ${item.city || 'Belo Horizonte'} - ${item.state || 'MG'}`
+                                  )}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center justify-center w-8 h-7 rounded bg-[#163848] hover:bg-[#1e495d] text-slate-200 border border-[#24536a] transition"
+                                  title="Abrir no Google Maps"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteAppointment(item.id)}
+                                  className="inline-flex items-center justify-center w-8 h-7 rounded bg-rose-500/15 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition cursor-pointer"
+                                  title="Excluir Agendamento"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Integrated Guardiar Map below the table */}
+              <div className="space-y-3 pt-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h2 className="text-sm font-bold text-white flex items-center gap-2">
                       <MapPin className="w-4 h-4 text-[#e31e24]" />
-                      Mapa Operacional do Dia ({formatDateBR(selectedDate)})
+                      Mapa dos Serviços Agendados & Base Fixa (Belo Horizonte - MG)
                     </h2>
-                    <p className="text-xs text-slate-300">
-                      Localização de todas as Ordens de Serviço agendadas para a data.
+                    <p className="text-xs text-slate-400">
+                      Base fixa em Rua Sena Madureira, 253 - Ouro Preto, BH - MG. Clique em qualquer ponto para abrir o serviço.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setActiveTab('routes')}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#e31e24] hover:bg-[#c8191e] text-white text-xs font-bold transition cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#e31e24] hover:bg-[#c8191e] text-white text-xs font-bold shadow transition cursor-pointer"
                   >
-                    <Route className="w-3.5 h-3.5" />
-                    Abrir Otimizador de Rotas
+                    <Route className="w-4 h-4" />
+                    Otimizar Rota no Google Maps
                   </button>
                 </div>
 
                 <InteractiveRouteMap
                   origin={{
-                    lat: Number(settings.hq_lat || -23.5218),
-                    lng: Number(settings.hq_lng || -46.6692),
-                    label: settings.hq_name || 'Matriz Guardiar Rastreamentos',
-                    address: settings.hq_address || '',
+                    lat: Number(settings.hq_lat || -19.87404),
+                    lng: Number(settings.hq_lng || -43.98780),
+                    label: settings.hq_name || 'Base Guardiar - Ouro Preto (BH)',
+                    address:
+                      settings.hq_address ||
+                      'Rua Sena Madureira, 253 - Ouro Preto, Belo Horizonte - MG',
                   }}
-                  stops={dateAppointments}
+                  stops={mapAppointments}
                   unassignedStops={[]}
                   allTechniciansMode={true}
                   technicians={technicians}
                   googleMapsApiKey={settings.google_maps_api_key}
                   onSelectStop={(stop) => openEditOsModal(stop)}
-                  heightClass="h-[470px]"
+                  heightClass="h-[460px]"
                 />
               </div>
-
-              <div className="xl:col-span-5 space-y-4">
-                <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Calendar className="w-4 h-4 text-[#e31e24]" />
-                      Ordens de Serviço do Dia ({dateAppointments.length})
-                    </h3>
-                    <button
-                      type="button"
-                      onClick={() => openNewOsModal(null)}
-                      className="text-xs text-[#ff8589] hover:underline font-bold cursor-pointer"
-                    >
-                      + Nova OS
-                    </button>
-                  </div>
-
-                  <div className="space-y-2.5 max-h-[430px] overflow-y-auto pr-1">
-                    {dateAppointments.length === 0 ? (
-                      <div className="text-xs text-slate-400 text-center py-8">
-                        Nenhuma OS agendada para esta data.
-                      </div>
-                    ) : (
-                      dateAppointments.map((osItem, idx) => {
-                        const st = STATUS_CONFIG[osItem.status] || STATUS_CONFIG.AGENDADO;
-                        return (
-                          <div
-                            key={osItem.id}
-                            onClick={() => openEditOsModal(osItem)}
-                            className="p-3 rounded-xl bg-[#0b1d26]/90 hover:bg-[#143342] border border-[#193d4f] cursor-pointer transition space-y-1.5"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <span className="w-5 h-5 rounded-full bg-[#e31e24] text-white font-bold text-[11px] flex items-center justify-center">
-                                  {idx + 1}
-                                </span>
-                                <span className="font-mono text-xs font-bold text-[#ff8589]">
-                                  {osItem.os_number}
-                                </span>
-                                <span className="text-xs font-mono text-slate-200 font-semibold">
-                                  ⏰ {osItem.time_window}
-                                </span>
-                              </div>
-                              <span
-                                className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${st.bg} ${st.text} ${st.border}`}
-                              >
-                                {st.shortLabel}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="font-bold text-white">
-                                {osItem.contact_name || osItem.client_name}
-                              </span>
-                              <span className="font-mono font-bold text-sky-400">
-                                {osItem.vehicle_plate} ({osItem.vehicle_model})
-                              </span>
-                            </div>
-
-                            <div className="text-[11px] text-slate-300 flex items-center justify-between">
-                              <span>
-                                📍 {osItem.address} — <strong>{osItem.neighborhood}</strong>
-                              </span>
-                              {osItem.technician_name && (
-                                <span className="text-emerald-300 font-semibold">
-                                  👷 {osItem.technician_badge}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* TAB 2: AGENDA & ORDENS DE SERVIÇO */}
-        {activeTab === 'agenda' && (
-          <div className="space-y-5">
-            <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center bg-[#0b1d26] border border-[#24536a] rounded-lg p-1">
-                  <button
-                    type="button"
-                    onClick={() => setAgendaViewMode('list')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition cursor-pointer ${
-                      agendaViewMode === 'list'
-                        ? 'bg-[#e31e24] text-white'
-                        : 'text-slate-300 hover:text-white'
-                    }`}
-                  >
-                    <Table className="w-3.5 h-3.5" />
-                    Lista Operacional
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAgendaViewMode('kanban')}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition cursor-pointer ${
-                      agendaViewMode === 'kanban'
-                        ? 'bg-[#e31e24] text-white'
-                        : 'text-slate-300 hover:text-white'
-                    }`}
-                  >
-                    <Columns className="w-3.5 h-3.5" />
-                    Quadro Kanban
-                  </button>
-                </div>
-
-                <div className="relative min-w-[240px]">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    placeholder="Buscar OS, contato, placa, modelo, bairro..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg pl-9 pr-3 py-1.5 text-xs text-white"
-                  />
-                </div>
-
-                <select
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                  className="bg-[#0b1d26] border border-[#24536a] rounded-lg px-3 py-1.5 text-xs text-white"
-                >
-                  <option value="ALL">Todos os Status</option>
-                  {Object.entries(STATUS_CONFIG).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v.label}
-                    </option>
-                  ))}
-                </select>
-
-                <label className="flex items-center gap-1.5 text-xs text-slate-200 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showAllDatesInList}
-                    onChange={(e) => setShowAllDatesInList(e.target.checked)}
-                    className="rounded border-[#24536a] bg-[#0b1d26] text-[#e31e24]"
-                  />
-                  Exibir todas as datas
-                </label>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => openNewOsModal(null)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#e31e24] hover:bg-[#c8191e] text-white text-xs font-bold shadow cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                Agendar Nova OS
-              </button>
+          {/* VIEW 2: AGENDAR SERVIÇO (Direct Inline Clean Page like Screenshot 3) */}
+          {activeTab === 'agendar' && (
+            <div className="max-w-5xl mx-auto">
+              <AppointmentModal
+                isOpen={true}
+                inlineMode={true}
+                initialData={null}
+                defaultDate={selectedDate}
+                currentOperatorName={authenticatedUser?.name || 'David'}
+                onSave={handleSaveAppointment}
+              />
             </div>
+          )}
 
-            {agendaViewMode === 'list' && (
-              <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl overflow-hidden shadow-lg">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-[#1f495d] bg-[#0b1d26]/80 text-[11px] font-bold uppercase tracking-wider text-slate-300">
-                        <th className="py-3 px-4">OS / Data & Janela Livre</th>
-                        <th className="py-3 px-4">Contato & Telefone</th>
-                        <th className="py-3 px-4">Placa & Modelo do Veículo</th>
-                        <th className="py-3 px-4">Endereço & Bairro</th>
-                        <th className="py-3 px-4">Técnico (Vincular / Retirar)</th>
-                        <th className="py-3 px-4">Status</th>
-                        <th className="py-3 px-4 text-right">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#193d4f] text-xs">
-                      {filteredAgendaAppointments.map((appItem) => {
-                        const st = STATUS_CONFIG[appItem.status] || STATUS_CONFIG.AGENDADO;
-                        const srv = SERVICE_TYPES[appItem.service_type] || SERVICE_TYPES.INSTALACAO;
-                        return (
-                          <tr key={appItem.id} className="hover:bg-[#163848]/40 transition">
-                            <td className="py-3 px-4">
-                              <div className="font-mono font-bold text-[#ff8589]">{appItem.os_number}</div>
-                              <div className="text-[11px] text-slate-300 font-mono">
-                                {formatDateBR(appItem.scheduled_date)} • ⏰ {appItem.time_window}
-                              </div>
-                            </td>
-                            <td className="py-3 px-4">
-                              <div className="font-bold text-white">
-                                {appItem.contact_name || appItem.client_name}
-                              </div>
-                              <div className="text-[11px] text-slate-300">
-                                {appItem.contact_phone || appItem.onsite_authorized_person}
-                              </div>
-                            </td>
-                            <td className="py-3 px-4">
-                              <div className="font-mono font-bold text-sky-400">
-                                {appItem.vehicle_plate}{' '}
-                                <span className="font-sans font-normal text-slate-200">
-                                  — {appItem.vehicle_model}
-                                </span>
-                              </div>
-                              <div className={`text-[11px] font-semibold ${srv.color}`}>
-                                {srv.label} ({appItem.estimated_duration_min} min)
-                              </div>
-                            </td>
-                            <td className="py-3 px-4">
-                              <div className="text-white font-medium">{appItem.neighborhood}</div>
-                              <div className="text-[11px] text-slate-300 truncate max-w-[240px]">
-                                {appItem.address}
-                              </div>
-                            </td>
-                            <td className="py-3 px-4">
-                              <select
-                                value={appItem.technician_id || ''}
-                                onChange={(e) =>
-                                  handleAssignTechToAppointment(
-                                    appItem.id,
-                                    e.target.value ? Number(e.target.value) : null
-                                  )
-                                }
-                                className="bg-[#0b1d26] border border-[#24536a] rounded-lg px-2.5 py-1 text-[11px] text-slate-200"
-                              >
-                                <option value="">-- Sem Técnico / Retirar --</option>
-                                {technicians.map((t) => (
-                                  <option key={t.id} value={t.id}>
-                                    [{t.badge}] {t.name}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className="py-3 px-4">
-                              <select
-                                value={appItem.status}
-                                onChange={(e) => handleStatusChange(appItem.id, e.target.value)}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border bg-[#0b1d26] ${st.text} ${st.border}`}
-                              >
-                                {Object.entries(STATUS_CONFIG).map(([k, v]) => (
-                                  <option key={k} value={k} className="bg-[#0f2834] text-white">
-                                    {v.shortLabel}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-                            <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
-                              <a
-                                href={getSinglePointGoogleMapsUrl(appItem.lat, appItem.lng, appItem.address)}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center px-2.5 py-1 rounded bg-[#e31e24]/20 text-[#ff8589] border border-[#e31e24]/40 text-[11px] font-semibold"
-                              >
-                                Mapa ↗
-                              </a>
-                              <button
-                                type="button"
-                                onClick={() => openEditOsModal(appItem)}
-                                className="px-2.5 py-1 rounded bg-[#163848] hover:bg-[#1e495d] text-slate-100 text-[11px] font-medium cursor-pointer"
-                              >
-                                Editar
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+          {/* VIEW 3: MAPA & ROTAS GOOGLE MAPS */}
+          {activeTab === 'routes' && (
+            <RoutePlannerView
+              selectedDate={selectedDate}
+              onChangeDate={setSelectedDate}
+              technicians={technicians}
+              appointments={appointments}
+              settings={settings}
+              onEditAppointment={openEditOsModal}
+              onAssignTechToAppointment={handleAssignTechToAppointment}
+              onStatusChange={handleStatusChange}
+              onRefreshData={fetchBootstrapData}
+            />
+          )}
 
-            {agendaViewMode === 'kanban' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {['AGENDADO', 'EM_DESLOCAMENTO', 'EM_EXECUCAO', 'CONCLUIDO'].map((colStatus) => {
-                  const stConfig = STATUS_CONFIG[colStatus];
-                  const colItems = filteredAgendaAppointments.filter((a) => a.status === colStatus);
+          {/* VIEW 4: TÉCNICOS DE CAMPO */}
+          {activeTab === 'technicians' && (
+            <TechniciansAndStockView
+              mode="technicians"
+              technicians={technicians}
+              trackers={trackers}
+              appointments={appointments}
+              selectedDate={selectedDate}
+              onSaveTechnician={handleSaveTechnician}
+              onDeleteTechnician={handleDeleteTechnician}
+              onSaveTracker={handleSaveTracker}
+              onOpenRouteForTech={() => setActiveTab('routes')}
+            />
+          )}
+        </main>
+      </div>
 
-                  return (
-                    <div
-                      key={colStatus}
-                      className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-3 flex flex-col gap-3 min-h-[460px]"
-                    >
-                      <div className="flex items-center justify-between px-1 pb-2 border-b border-[#193d4f]">
-                        <div className="flex items-center gap-2">
-                          <span className={`w-2.5 h-2.5 rounded-full ${stConfig.dot}`} />
-                          <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                            {stConfig.shortLabel}
-                          </h3>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full bg-[#0b1d26] text-xs font-mono font-bold text-slate-200">
-                          {colItems.length}
-                        </span>
-                      </div>
-
-                      <div className="space-y-2.5 flex-1">
-                        {colItems.map((item) => (
-                          <div
-                            key={item.id}
-                            onClick={() => openEditOsModal(item)}
-                            className="p-3 rounded-xl bg-[#0b1d26] hover:bg-[#143342] border border-[#193d4f] cursor-pointer transition space-y-2"
-                          >
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="font-mono font-bold text-[#ff8589]">{item.os_number}</span>
-                              <span className="text-slate-300 font-mono">⏰ {item.time_window}</span>
-                            </div>
-                            <div className="text-xs font-bold text-white">
-                              {item.contact_name || item.client_name}
-                            </div>
-                            <div className="text-[11px] text-sky-300 font-mono">
-                              🚗 {item.vehicle_plate} ({item.vehicle_model})
-                            </div>
-                            <div className="text-[11px] text-slate-300">📍 {item.neighborhood}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 3: PLANEJAMENTO DE ROTAS & GOOGLE MAPS */}
-        {activeTab === 'routes' && (
-          <RoutePlannerView
-            selectedDate={selectedDate}
-            onChangeDate={setSelectedDate}
-            technicians={technicians}
-            appointments={appointments}
-            settings={settings}
-            onEditAppointment={openEditOsModal}
-            onAssignTechToAppointment={handleAssignTechToAppointment}
-            onStatusChange={handleStatusChange}
-            onRefreshData={fetchBootstrapData}
-          />
-        )}
-
-        {/* TAB 4: TÉCNICOS DE CAMPO */}
-        {activeTab === 'technicians' && (
-          <TechniciansAndStockView
-            mode="technicians"
-            technicians={technicians}
-            trackers={trackers}
-            appointments={appointments}
-            selectedDate={selectedDate}
-            onSaveTechnician={handleSaveTechnician}
-            onDeleteTechnician={handleDeleteTechnician}
-            onSaveTracker={handleSaveTracker}
-            onOpenRouteForTech={() => setActiveTab('routes')}
-          />
-        )}
-
-        {/* TAB 5: ESTOQUE DE RASTREADORES */}
-        {activeTab === 'stock' && (
-          <TechniciansAndStockView
-            mode="stock"
-            technicians={technicians}
-            trackers={trackers}
-            appointments={appointments}
-            selectedDate={selectedDate}
-            onSaveTechnician={handleSaveTechnician}
-            onDeleteTechnician={handleDeleteTechnician}
-            onSaveTracker={handleSaveTracker}
-          />
-        )}
-      </main>
-
-      {/* Modals */}
+      {/* Edit Appointment Modal */}
       <AppointmentModal
         isOpen={isOsModalOpen}
         onClose={() => {
@@ -929,6 +765,7 @@ export default function App() {
         onDelete={editingOs?.id ? handleDeleteAppointment : null}
       />
 
+      {/* Settings Modal */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}

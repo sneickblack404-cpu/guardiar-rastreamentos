@@ -134,16 +134,16 @@ export default function RoutePlannerView({
   const mapOrigin =
     selectedTechId === 'ALL' || selectedTechId === 'ALL_DAY'
       ? {
-          lat: Number(settings.hq_lat || -23.5218),
-          lng: Number(settings.hq_lng || -46.6692),
-          label: settings.hq_name || 'Matriz Operacional Guardiar',
-          address: settings.hq_address || '',
+          lat: Number(settings.hq_lat || -19.87404),
+          lng: Number(settings.hq_lng || -43.98780),
+          label: settings.hq_name || 'Base Guardiar - Ouro Preto (BH)',
+          address: settings.hq_address || 'Rua Sena Madureira, 253 - Ouro Preto, Belo Horizonte - MG',
         }
       : routeData?.origin || {
-          lat: activeTech?.base_lat || -23.5218,
-          lng: activeTech?.base_lng || -46.6692,
+          lat: activeTech?.base_lat || -19.87404,
+          lng: activeTech?.base_lng || -43.98780,
           label: `Base: ${activeTech?.name || ''}`,
-          address: activeTech?.base_address || '',
+          address: activeTech?.base_address || 'Rua Sena Madureira, 253 - Ouro Preto, Belo Horizonte - MG',
         };
 
   const mapStops =
