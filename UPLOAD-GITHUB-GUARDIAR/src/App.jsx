@@ -668,10 +668,10 @@ export default function App() {
                   <div>
                     <h2 className="text-sm font-bold text-white flex items-center gap-2">
                       <MapPin className="w-4 h-4 text-[#e31e24]" />
-                      Mapa dos Serviços Agendados & Base Fixa (Belo Horizonte - MG)
+                      Mapa dos Serviços Agendados (Início no 1º Serviço)
                     </h2>
                     <p className="text-xs text-slate-400">
-                      Base fixa em Rua Sena Madureira, 253 - Ouro Preto, BH - MG. Clique em qualquer ponto para abrir o serviço.
+                      A rota começa sempre a partir do 1º serviço agendado. Clique em qualquer ponto no mapa para ver ou editar.
                     </p>
                   </div>
                   <button

@@ -197,33 +197,12 @@ export default function RoutePlannerView({
               </select>
             </div>
 
-            {selectedTechId !== 'ALL' && selectedTechId !== 'ALL_DAY' && (
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-300 mb-1">
-                  Ponto de Partida
-                </label>
-                <select
-                  value={originType}
-                  onChange={(e) => setOriginType(e.target.value)}
-                  className="bg-[#0b1d26] border border-[#24536a] rounded-lg px-3 py-2 text-sm text-white"
-                >
-                  <option value="tech_base">Base do Técnico ({activeTech?.badge})</option>
-                  <option value="company_hq">Matriz Central Guardiar</option>
-                </select>
-              </div>
-            )}
-
-            {selectedTechId !== 'ALL' && (
-              <label className="flex items-center gap-2 text-xs text-slate-200 cursor-pointer pt-5 select-none">
-                <input
-                  type="checkbox"
-                  checked={returnToBase}
-                  onChange={(e) => setReturnToBase(e.target.checked)}
-                  className="rounded border-[#24536a] bg-[#0b1d26] text-[#e31e24]"
-                />
-                Incluir Retorno à Base
-              </label>
-            )}
+            <div className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-lg bg-[#0b1d26] border border-[#24536a] text-xs text-slate-200 mt-5">
+              <MapPin className="w-3.5 h-3.5 text-[#e31e24]" />
+              <span>
+                Início da Rota: <strong className="text-white">Sempre no 1º Serviço Agendado</strong>
+              </span>
+            </div>
           </div>
 
           {/* Right: Smart Optimization Actions */}
@@ -275,8 +254,8 @@ export default function RoutePlannerView({
                     </h3>
                     <p className="text-xs text-slate-300">
                       {selectedTechId === 'ALL_DAY'
-                        ? `Partida: ${settings.hq_name || 'Matriz Guardiar'}`
-                        : `${activeTech?.fleet_vehicle} (${activeTech?.fleet_plate}) • ${activeTech?.region}`}
+                        ? 'Início da Rota: 1º Serviço Agendado do Dia'
+                        : `${activeTech?.fleet_vehicle} (${activeTech?.fleet_plate}) • Início no 1º Serviço`}
                     </p>
                   </div>
                 </div>
@@ -350,22 +329,8 @@ export default function RoutePlannerView({
             </div>
           )}
 
-          {/* Origin Point Card */}
-          <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-3.5 flex items-start gap-3">
-            <div className="w-8 h-8 rounded-lg bg-[#e31e24]/20 border border-[#e31e24]/50 text-[#ff8589] font-bold text-[10px] flex items-center justify-center shrink-0">
-              BASE
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-[#ff8589]">
-                Ponto de Partida (Saída {settings.workday_start || '08:00'})
-              </div>
-              <div className="text-xs font-semibold text-white truncate">{mapOrigin.label}</div>
-              <div className="text-xs text-slate-300 truncate">{mapOrigin.address}</div>
-            </div>
-          </div>
-
           {/* Ordered Stops List */}
-          <div className="space-y-3 max-h-[540px] overflow-y-auto pr-1">
+          <div className="space-y-3 max-h-[580px] overflow-y-auto pr-1">
             {mapStops.length === 0 ? (
               <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-8 text-center space-y-2">
                 <Route className="w-8 h-8 text-slate-400 mx-auto" />
@@ -387,19 +352,26 @@ export default function RoutePlannerView({
                     key={stop.id}
                     className="bg-[#0f2834] border border-[#1f495d] hover:border-[#2d6884] rounded-xl p-3.5 transition space-y-2.5"
                   >
-                    {stop.leg_distance_km !== undefined && (
-                      <div className="flex items-center justify-between text-[11px] px-2.5 py-1 rounded bg-[#0b1d26] border border-[#193d4f] text-slate-300">
+                    <div className="flex items-center justify-between text-[11px] px-2.5 py-1 rounded bg-[#0b1d26] border border-[#193d4f] text-slate-300">
+                      {idx === 0 ? (
+                        <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
+                          <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+                          🚩 PONTO DE PARTIDA DA ROTA (1º Serviço)
+                        </span>
+                      ) : (
                         <span className="flex items-center gap-1.5">
                           <Navigation className="w-3 h-3 text-[#e31e24]" />
-                          Trecho anterior → Parada #{stopNumber}:{' '}
-                          <strong className="text-white font-mono">+{stop.leg_distance_km} km</strong> (~
-                          {stop.leg_drive_min} min)
+                          Serviço #{idx} → Serviço #{stopNumber}:{' '}
+                          <strong className="text-white font-mono">+{stop.leg_distance_km || 0} km</strong> (~
+                          {stop.leg_drive_min || 0} min)
                         </span>
+                      )}
+                      {stop.eta_arrival && (
                         <span className="font-mono text-emerald-400 font-semibold">
-                          ETA: {stop.eta_arrival} - {stop.eta_departure}
+                          Horário: {stop.eta_arrival}
                         </span>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-start gap-2.5">
@@ -457,7 +429,7 @@ export default function RoutePlannerView({
                     {stop.is_late_warning && (
                       <div className="flex items-center gap-1.5 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded">
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        ETA previsto ({stop.eta_arrival}) ultrapassa o fim da janela ({stop.time_window}).
+                        ETA previsto ({stop.eta_arrival}) ultrapassa o horário agendado ({stop.time_window}).
                       </div>
                     )}
 
@@ -548,21 +520,6 @@ export default function RoutePlannerView({
                 );
               })
             )}
-
-            {selectedTechId !== 'ALL' &&
-              returnToBase &&
-              routeData?.return_to_base?.enabled &&
-              mapStops.length > 0 && (
-                <div className="bg-[#0f2834] border border-[#1f495d] rounded-xl p-3 flex items-center justify-between text-xs text-slate-300">
-                  <span className="flex items-center gap-2">
-                    <RotateCcw className="w-4 h-4 text-[#ff6b6f]" />
-                    Retorno à Base Operacional ({mapOrigin.label})
-                  </span>
-                  <span className="font-mono text-white">
-                    +{routeData.return_to_base.distance_km} km (~{routeData.return_to_base.drive_min} min)
-                  </span>
-                </div>
-              )}
           </div>
         </div>
 

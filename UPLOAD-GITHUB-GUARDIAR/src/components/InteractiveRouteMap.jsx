@@ -85,47 +85,6 @@ export default function InteractiveRouteMap({
 
     const boundsPoints = [];
 
-    // 1. Base Marker
-    if (origin && origin.lat && origin.lng) {
-      boundsPoints.push([origin.lat, origin.lng]);
-      const baseIcon = L.divIcon({
-        className: 'custom-base-icon',
-        html: `
-          <div style="
-            display:flex;align-items:center;justify-content:center;
-            width:40px;height:40px;border-radius:10px;
-            background:#12303e;border:2px solid #e31e24;
-            color:#ffffff;font-weight:800;font-size:11px;
-            box-shadow:0 8px 20px rgba(0,0,0,0.65);
-          " title="${origin.label || 'Base Guardiar'}">
-            BASE
-          </div>
-        `,
-        iconSize: [40, 40],
-        iconAnchor: [20, 20],
-      });
-
-      const baseMarker = L.marker([origin.lat, origin.lng], { icon: baseIcon });
-      baseMarker.bindPopup(`
-        <div style="min-width:210px;">
-          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#ff6b6f;font-weight:700;margin-bottom:2px;">
-            Ponto de Partida / Base
-          </div>
-          <div style="font-weight:700;font-size:13px;color:#f8fafc;margin-bottom:4px;">
-            ${origin.label || 'Matriz Guardiar Rastreamentos'}
-          </div>
-          <div style="font-size:11px;color:#cbd5e1;margin-bottom:8px;">
-            ${origin.address || ''}
-          </div>
-          <a href="${getSinglePointGoogleMapsUrl(origin.lat, origin.lng, origin.address)}" target="_blank" rel="noreferrer"
-             style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#ff8589;text-decoration:none;font-weight:700;">
-            Abrir Base no Google Maps ↗
-          </a>
-        </div>
-      `);
-      baseMarker.addTo(group);
-    }
-
     // 2. Unassigned Pending Stops
     unassignedStops.forEach((uStop) => {
       if (!uStop.lat || !uStop.lng) return;
@@ -291,28 +250,16 @@ export default function InteractiveRouteMap({
     }
 
     async function drawRoutes() {
-      if (stops.length === 0) {
+      if (stops.length < 2) {
         setStreetGeometryStatus('idle');
         return;
       }
 
       if (allTechniciansMode) {
-        const byTech = new Map();
-        for (const s of stops) {
-          const key = s.technician_id || 'UNASSIGNED';
-          if (!byTech.has(key)) byTech.set(key, []);
-          byTech.get(key).push(s);
-        }
-
-        for (const [techId, techStops] of byTech.entries()) {
-          const techObj = technicians.find((t) => t.id === techId);
-          const color = techObj?.color || '#e31e24';
-          const startLat = techObj?.base_lat || origin?.lat || -23.5218;
-          const startLng = techObj?.base_lng || origin?.lng || -46.6692;
-          const pts = [[startLat, startLng], ...techStops.map((s) => [s.lat, s.lng])];
-
+        const pts = stops.filter((s) => s.lat && s.lng).map((s) => [s.lat, s.lng]);
+        if (pts.length >= 2) {
           L.polyline(pts, {
-            color,
+            color: '#e31e24',
             weight: 4,
             opacity: 0.85,
             dashArray: '8, 6',
@@ -322,16 +269,11 @@ export default function InteractiveRouteMap({
         return;
       }
 
+      // Route ALWAYS starts at the first service (stops[0]) and connects to subsequent services
       const coordList = [];
-      if (origin && origin.lat && origin.lng) {
-        coordList.push([origin.lat, origin.lng]);
-      }
       stops.forEach((s) => {
         if (s.lat && s.lng) coordList.push([s.lat, s.lng]);
       });
-      if (returnToBase && origin && origin.lat && origin.lng && stops.length > 0) {
-        coordList.push([origin.lat, origin.lng]);
-      }
 
       if (coordList.length < 2) return;
 
@@ -453,15 +395,14 @@ export default function InteractiveRouteMap({
       <div className="bg-[#0b1d26] border-t border-[#1f495d] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300">
         <div className="flex flex-wrap items-center gap-4">
           <span className="inline-flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded bg-[#12303e] border-2 border-[#e31e24] inline-block" />
-            <strong className="text-white">BASE:</strong> Matriz Guardiar
-          </span>
-          <span className="inline-flex items-center gap-1.5">
             <span
               className="w-3.5 h-3.5 rounded-full inline-block border border-white"
               style={{ backgroundColor: activeTechColor }}
             />
-            <strong className="text-white">1, 2, 3...</strong> Ordem das Paradas na Rota
+            <strong className="text-white">Parada #1:</strong> Início da Rota (1º Serviço)
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <strong className="text-white">1, 2, 3...</strong> Sequência dos Serviços
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="w-3.5 h-3.5 rounded-full bg-emerald-600 inline-block" />

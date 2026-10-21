@@ -67,20 +67,16 @@ function getEnrichedAppointments(dateFilter = null, techFilter = null) {
   return db.prepare(sql).all(...params);
 }
 
-function buildGoogleMapsRouteUrl(originLat, originLng, stops, returnToBase = false) {
+function buildGoogleMapsRouteUrl(stops) {
   if (!stops || stops.length === 0) return null;
-  const origin = `${originLat},${originLng}`;
-  let destination = '';
-  let waypointsList = [];
-
-  if (returnToBase) {
-    destination = origin;
-    waypointsList = stops.map((s) => `${s.lat},${s.lng}`);
-  } else {
-    const last = stops[stops.length - 1];
-    destination = `${last.lat},${last.lng}`;
-    waypointsList = stops.slice(0, -1).map((s) => `${s.lat},${s.lng}`);
+  if (stops.length === 1) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${stops[0].lat},${stops[0].lng}&travelmode=driving`;
   }
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  const origin = `${first.lat},${first.lng}`;
+  const destination = `${last.lat},${last.lng}`;
+  const waypointsList = stops.slice(1, -1).map((s) => `${s.lat},${s.lng}`);
 
   const params = new URLSearchParams({
     api: '1',
@@ -696,15 +692,13 @@ app.delete('/api/appointments/:id', (req, res) => {
   }
 });
 
-// POST /api/routes/optimize - Optimize route for a technician OR for all appointments of the day
+// POST /api/routes/optimize - Optimize route starting ALWAYS from the 1st service
 app.post('/api/routes/optimize', (req, res) => {
   try {
     const {
       date,
       technician_id, // number or 'ALL_DAY'
       mode = 'time_window_proximity',
-      origin_type = 'tech_base',
-      return_to_base = false,
       custom_order_ids = null,
     } = req.body;
 
@@ -714,12 +708,6 @@ app.post('/api/routes/optimize', (req, res) => {
       tech = db.prepare('SELECT * FROM technicians WHERE id = ?').get(Number(technician_id));
     }
 
-    const useCompanyHq = !tech || origin_type === 'company_hq';
-    const originLat = useCompanyHq ? Number(settings.hq_lat || -19.87404) : tech.base_lat;
-    const originLng = useCompanyHq ? Number(settings.hq_lng || -43.98780) : tech.base_lng;
-    const originAddress = useCompanyHq ? settings.hq_address : tech.base_address;
-    const originLabel = useCompanyHq ? settings.hq_name : `Base: ${tech.name}`;
-
     const allTechApps = getEnrichedAppointments(
       date,
       tech ? tech.id : null
@@ -727,12 +715,17 @@ app.post('/api/routes/optimize', (req, res) => {
 
     if (allTechApps.length === 0) {
       return res.json({
-        origin: { lat: originLat, lng: originLng, address: originAddress, label: originLabel },
+        origin: null,
         stops: [],
         metrics: { total_distance_km: 0, total_drive_min: 0, total_service_min: 0, total_day_min: 0 },
         google_maps_url: null,
       });
     }
+
+    const parseMinutes = (tStr = '08:00') => {
+      const [h, m] = String(tStr).split(':').map(Number);
+      return (isNaN(h) ? 8 : h) * 60 + (isNaN(m) ? 0 : m);
+    };
 
     let orderedStops = [];
 
@@ -748,33 +741,46 @@ app.post('/api/routes/optimize', (req, res) => {
         orderedStops.push(rem);
       }
     } else if (mode === 'proximity') {
-      const remaining = [...allTechApps];
-      let curLat = originLat;
-      let curLng = originLng;
-      while (remaining.length > 0) {
+      // Start at the earliest scheduled appointment, then chain nearest neighbor from there
+      const sortedByTime = [...allTechApps].sort(
+        (a, b) =>
+          parseMinutes(a.window_start || a.scheduled_time) -
+          parseMinutes(b.window_start || b.scheduled_time)
+      );
+      const firstStop = sortedByTime.shift();
+      orderedStops.push(firstStop);
+      let curLat = firstStop.lat;
+      let curLng = firstStop.lng;
+
+      while (sortedByTime.length > 0) {
         let bestIdx = 0;
         let bestDist = Infinity;
-        for (let i = 0; i < remaining.length; i++) {
-          const d = haversineKm(curLat, curLng, remaining[i].lat, remaining[i].lng);
+        for (let i = 0; i < sortedByTime.length; i++) {
+          const d = haversineKm(curLat, curLng, sortedByTime[i].lat, sortedByTime[i].lng);
           if (d < bestDist) {
             bestDist = d;
             bestIdx = i;
           }
         }
-        const chosen = remaining.splice(bestIdx, 1)[0];
+        const chosen = sortedByTime.splice(bestIdx, 1)[0];
         orderedStops.push(chosen);
         curLat = chosen.lat;
         curLng = chosen.lng;
       }
     } else {
-      // 'time_window_proximity': Group by hour bucket of window_start, then Nearest Neighbor
-      const parseMinutes = (tStr = '08:00') => {
-        const [h, m] = String(tStr).split(':').map(Number);
-        return (isNaN(h) ? 8 : h) * 60 + (isNaN(m) ? 0 : m);
-      };
+      // 'time_window_proximity': Start at earliest appointment, then group by time bucket & proximity
+      const sortedByTime = [...allTechApps].sort(
+        (a, b) =>
+          parseMinutes(a.window_start || a.scheduled_time) -
+          parseMinutes(b.window_start || b.scheduled_time)
+      );
+      const firstStop = sortedByTime.shift();
+      orderedStops.push(firstStop);
+      let curLat = firstStop.lat;
+      let curLng = firstStop.lng;
 
       const buckets = new Map();
-      for (const appItem of allTechApps) {
+      for (const appItem of sortedByTime) {
         const startMin = parseMinutes(appItem.window_start || appItem.scheduled_time);
         const bucketKey = Math.floor(startMin / 90);
         if (!buckets.has(bucketKey)) buckets.set(bucketKey, []);
@@ -782,8 +788,6 @@ app.post('/api/routes/optimize', (req, res) => {
       }
 
       const sortedKeys = [...buckets.keys()].sort((a, b) => a - b);
-      let curLat = originLat;
-      let curLng = originLng;
 
       for (const k of sortedKeys) {
         const group = buckets.get(k);
@@ -813,9 +817,6 @@ app.post('/api/routes/optimize', (req, res) => {
 
     const avgSpeedKmh = Number(settings.default_urban_speed_kmh || 28);
     const bufferMin = Number(settings.buffer_between_os_min || 15);
-    const workdayStart = settings.workday_start || '08:00';
-    const [startH, startM] = workdayStart.split(':').map(Number);
-    let currentMinutesOfDay = startH * 60 + startM;
 
     const formatTimeMin = (totalMin) => {
       const h = Math.floor(totalMin / 60) % 24;
@@ -823,32 +824,35 @@ app.post('/api/routes/optimize', (req, res) => {
       return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     };
 
-    let prevLat = originLat;
-    let prevLng = originLng;
+    const firstService = orderedStops[0];
+    let currentMinutesOfDay = parseMinutes(firstService.window_start || firstService.scheduled_time || '08:00');
+    let prevLat = firstService.lat;
+    let prevLng = firstService.lng;
     let totalDistanceKm = 0;
     let totalDriveMin = 0;
     let totalServiceMin = 0;
 
     const enrichedStops = orderedStops.map((stop, idx) => {
-      const legDistanceKm = haversineKm(prevLat, prevLng, stop.lat, stop.lng);
-      const legDriveMin = Math.max(8, Math.round((legDistanceKm / avgSpeedKmh) * 60));
+      let legDistanceKm = 0;
+      let legDriveMin = 0;
 
-      currentMinutesOfDay += legDriveMin;
-      const etaArrival = formatTimeMin(currentMinutesOfDay);
+      if (idx > 0) {
+        legDistanceKm = haversineKm(prevLat, prevLng, stop.lat, stop.lng);
+        legDriveMin = Math.max(5, Math.round((legDistanceKm / avgSpeedKmh) * 60));
+        currentMinutesOfDay += legDriveMin;
+      }
 
       const startStr = stop.window_start || stop.scheduled_time || '08:00';
-      const [schedH, schedM] = startStr.split(':').map(Number);
-      const schedMin = (isNaN(schedH) ? 8 : schedH) * 60 + (isNaN(schedM) ? 0 : schedM);
-      const startServiceMin = Math.max(currentMinutesOfDay, schedMin - 15);
+      const schedMin = parseMinutes(startStr);
+      const startServiceMin = idx === 0 ? schedMin : Math.max(currentMinutesOfDay, schedMin);
+      const etaArrival = formatTimeMin(startServiceMin);
       const finishServiceMin = startServiceMin + (stop.estimated_duration_min || 60);
       const etaDeparture = formatTimeMin(finishServiceMin);
 
-      let windowEndMin = schedMin + 120;
-      if (stop.window_end) {
-        const [eh, em] = stop.window_end.split(':').map(Number);
-        if (!isNaN(eh)) windowEndMin = eh * 60 + (em || 0);
-      }
-      const isLateWarning = currentMinutesOfDay > windowEndMin;
+      const singleStopGoogleMapsUrl =
+        idx === 0
+          ? `https://www.google.com/maps/dir/?api=1&destination=${stop.lat},${stop.lng}&travelmode=driving`
+          : `https://www.google.com/maps/dir/?api=1&origin=${prevLat},${prevLng}&destination=${stop.lat},${stop.lng}&travelmode=driving`;
 
       currentMinutesOfDay = finishServiceMin + bufferMin;
       prevLat = stop.lat;
@@ -858,8 +862,6 @@ app.post('/api/routes/optimize', (req, res) => {
       totalDriveMin += legDriveMin;
       totalServiceMin += stop.estimated_duration_min || 60;
 
-      const singleStopGoogleMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${originLat},${originLng}&destination=${stop.lat},${stop.lng}&travelmode=driving`;
-
       return {
         ...stop,
         stop_number: idx + 1,
@@ -867,28 +869,19 @@ app.post('/api/routes/optimize', (req, res) => {
         leg_drive_min: legDriveMin,
         eta_arrival: etaArrival,
         eta_departure: etaDeparture,
-        is_late_warning: isLateWarning,
+        is_late_warning: false,
         google_maps_nav_url: singleStopGoogleMapsUrl,
       };
     });
 
-    let returnLegKm = 0;
-    let returnLegMin = 0;
-    if (return_to_base && enrichedStops.length > 0) {
-      returnLegKm = haversineKm(prevLat, prevLng, originLat, originLng);
-      returnLegMin = Math.max(8, Math.round((returnLegKm / avgSpeedKmh) * 60));
-      totalDistanceKm += returnLegKm;
-      totalDriveMin += returnLegMin;
-    }
-
-    const googleMapsUrl = buildGoogleMapsRouteUrl(originLat, originLng, enrichedStops, return_to_base);
+    const googleMapsUrl = buildGoogleMapsRouteUrl(enrichedStops);
 
     res.json({
       origin: {
-        lat: originLat,
-        lng: originLng,
-        address: originAddress,
-        label: originLabel,
+        lat: firstService.lat,
+        lng: firstService.lng,
+        address: `${firstService.address} — ${firstService.neighborhood} (${firstService.city})`,
+        label: `1º Serviço: ${firstService.contact_name || firstService.client_name}`,
       },
       technician: tech
         ? {
@@ -898,9 +891,9 @@ app.post('/api/routes/optimize', (req, res) => {
         : null,
       stops: enrichedStops,
       return_to_base: {
-        enabled: Boolean(return_to_base),
-        distance_km: Number(returnLegKm.toFixed(2)),
-        drive_min: returnLegMin,
+        enabled: false,
+        distance_km: 0,
+        drive_min: 0,
       },
       metrics: {
         total_distance_km: Number(totalDistanceKm.toFixed(2)),

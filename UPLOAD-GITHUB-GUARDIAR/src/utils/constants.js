@@ -58,11 +58,9 @@ export const STATUS_CONFIG = {
 };
 
 export const SERVICE_TYPES = {
-  INSTALACAO: { label: 'Instalação de Rastreador', color: 'text-emerald-400', badgeBg: 'bg-emerald-500/10 border-emerald-500/30' },
-  MANUTENCAO: { label: 'Manutenção / Reparo', color: 'text-amber-400', badgeBg: 'bg-amber-500/10 border-amber-500/30' },
-  TROCA_EQUIPAMENTO: { label: 'Upgrade / Troca de Módulo', color: 'text-blue-400', badgeBg: 'bg-blue-500/10 border-blue-500/30' },
-  RETIRADA: { label: 'Desinstalação / Retirada', color: 'text-rose-400', badgeBg: 'bg-rose-500/10 border-rose-500/30' },
-  VISTORIA_TECNICA: { label: 'Vistoria Técnica / Teste RF', color: 'text-purple-400', badgeBg: 'bg-purple-500/10 border-purple-500/30' },
+  INSTALACAO: { label: 'Instalação', color: 'text-emerald-400', badgeBg: 'bg-emerald-500/10 border-emerald-500/30' },
+  MANUTENCAO: { label: 'Manutenção', color: 'text-amber-400', badgeBg: 'bg-amber-500/10 border-amber-500/30' },
+  RETIRADA: { label: 'Retirada', color: 'text-rose-400', badgeBg: 'bg-rose-500/10 border-rose-500/30' },
 };
 
 export const PRIORITY_CONFIG = {
