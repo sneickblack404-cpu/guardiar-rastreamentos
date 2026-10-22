@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
 import {
   X,
@@ -7,8 +7,18 @@ import {
   CheckCircle2,
   Clock,
   Trash2,
+  Copy,
+  Check,
+  Navigation,
+  Sparkles,
 } from 'lucide-react';
-import { STATUS_CONFIG, SERVICE_TYPES } from '../utils/constants';
+import {
+  SERVICE_TYPES,
+  DAILY_TIME_SLOTS,
+  formatDateBR,
+  formatOsCopyText,
+  calculateDistanceKm,
+} from '../utils/constants';
 
 const UF_OPTIONS = [
   'MG', 'SP', 'RJ', 'ES', 'PR', 'SC', 'RS', 'BA', 'GO', 'DF',
@@ -16,14 +26,23 @@ const UF_OPTIONS = [
   'SE', 'PI', 'TO', 'RO', 'AC', 'AP', 'RR',
 ];
 
+function addOneHour(timeStr) {
+  if (!timeStr || !timeStr.includes(':')) return '09:00';
+  const [h, m] = timeStr.split(':').map(Number);
+  const nextH = Math.min(20, (h || 8) + 1);
+  return `${String(nextH).padStart(2, '0')}:${String(m || 0).padStart(2, '0')}`;
+}
+
 export default function AppointmentModal({
   isOpen,
   onClose,
   initialData = null,
   defaultDate,
   currentOperatorName = 'David',
+  appointments = [],
   onSave,
   onDelete,
+  onGoToList,
   inlineMode = false, // when true, renders directly inside the "Agendar serviço" page
 }) {
   const [formData, setFormData] = useState({
@@ -55,6 +74,11 @@ export default function AppointmentModal({
   const [saving, setSaving] = useState(false);
   const [pinMovedManually, setPinMovedManually] = useState(false);
 
+  // Stores the most recently completed/saved OS so the user can copy it right below the form
+  const [generatedOsText, setGeneratedOsText] = useState('');
+  const [copiedOs, setCopiedOs] = useState(false);
+  const copyBoxRef = useRef(null);
+
   const miniMapContainerRef = useRef(null);
   const miniMapRef = useRef(null);
   const miniMarkerRef = useRef(null);
@@ -73,7 +97,6 @@ export default function AppointmentModal({
         if (parts[1]) wEnd = parts[1];
       }
 
-      // Parse street and number from address if possible
       const rawAddr = initialData.address || '';
       let parsedStreet = rawAddr;
       let parsedNumber = '';
@@ -121,6 +144,7 @@ export default function AppointmentModal({
             : -43.98780,
         internal_notes: initialData.internal_notes || '',
       });
+      setGeneratedOsText(formatOsCopyText(initialData));
       setPinMovedManually(false);
     } else {
       setFormData({
@@ -150,6 +174,87 @@ export default function AppointmentModal({
     }
     setGeoFeedback('');
   }, [active, initialData, defaultDate]);
+
+  // Calculate Day Schedule, Available Time Slots, and Proximity to Last Scheduled Service
+  const scheduleAnalysis = useMemo(() => {
+    const dayList = (appointments || [])
+      .filter(
+        (a) =>
+          a.scheduled_date === formData.scheduled_date &&
+          a.status !== 'CANCELADO' &&
+          a.id !== initialData?.id
+      )
+      .map((a) => {
+        const time = (a.window_start || a.scheduled_time || a.time_window || '08:00')
+          .split('-')[0]
+          .trim();
+        const distKm = calculateDistanceKm(formData.lat, formData.lng, a.lat, a.lng);
+        const driveMin = distKm !== null ? Math.max(5, Math.round((distKm / 28) * 60)) : null;
+        return {
+          ...a,
+          cleanTime: time,
+          distKm,
+          driveMin,
+        };
+      })
+      .sort((a, b) => a.cleanTime.localeCompare(b.cleanTime));
+
+    const lastScheduled = dayList.length > 0 ? dayList[dayList.length - 1] : null;
+
+    // Also find the closest scheduled appointment on that day
+    let nearestScheduled = null;
+    for (const item of dayList) {
+      if (item.distKm !== null) {
+        if (!nearestScheduled || item.distKm < nearestScheduled.distKm) {
+          nearestScheduled = item;
+        }
+      }
+    }
+
+    const occupiedByHour = {};
+    dayList.forEach((item) => {
+      const hourPrefix = item.cleanTime.slice(0, 2) + ':00';
+      occupiedByHour[hourPrefix] = item;
+      occupiedByHour[item.cleanTime] = item;
+    });
+
+    const suggestedNextTimeAfterLast = lastScheduled
+      ? addOneHour(lastScheduled.cleanTime)
+      : '08:00';
+
+    const slots = DAILY_TIME_SLOTS.map((slot) => {
+      const occupiedItem = occupiedByHour[slot] || null;
+      const isAfterLast =
+        lastScheduled &&
+        !occupiedItem &&
+        (slot === suggestedNextTimeAfterLast ||
+          (slot > lastScheduled.cleanTime &&
+            slot <= addOneHour(suggestedNextTimeAfterLast)));
+
+      const isNearClosest =
+        nearestScheduled &&
+        !occupiedItem &&
+        nearestScheduled.distKm !== null &&
+        nearestScheduled.distKm <= 10 &&
+        slot === addOneHour(nearestScheduled.cleanTime);
+
+      return {
+        time: slot,
+        occupiedItem,
+        isAvailable: !occupiedItem,
+        isRecommendedAfterLast: Boolean(isAfterLast),
+        isRecommendedNearClosest: Boolean(isNearClosest),
+      };
+    });
+
+    return {
+      dayList,
+      lastScheduled,
+      nearestScheduled,
+      suggestedNextTimeAfterLast,
+      slots,
+    };
+  }, [appointments, formData.scheduled_date, formData.lat, formData.lng, initialData]);
 
   // Initialize Mini Map for Pin Adjustment
   useEffect(() => {
@@ -289,7 +394,6 @@ export default function AppointmentModal({
     return null;
   };
 
-  // Auto-parse when pasting or typing in "Buscar endereço"
   const handleQuickSearchApply = async () => {
     const raw = formData.search_address.trim();
     if (!raw) {
@@ -297,7 +401,6 @@ export default function AppointmentModal({
       return;
     }
 
-    // If user typed something like "Rua João Gomide Leite, 81 - Pindorama, Belo Horizonte"
     const updated = { ...formData };
     if (!updated.street) {
       const parts = raw.split('-').map((s) => s.trim());
@@ -317,6 +420,13 @@ export default function AppointmentModal({
     await runGeocodeLookup(updated);
   };
 
+  const handleCopyGeneratedOs = () => {
+    if (!generatedOsText) return;
+    navigator.clipboard.writeText(generatedOsText);
+    setCopiedOs(true);
+    setTimeout(() => setCopiedOs(false), 3000);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const composedAddress = buildComposedAddress(formData);
@@ -332,7 +442,6 @@ export default function AppointmentModal({
       let finalState = formData.state || 'MG';
       let finalNeighborhood = formData.neighborhood || '';
 
-      // Always geocode automatically on save unless the user explicitly dragged the pin!
       if (!pinMovedManually) {
         const geo = await runGeocodeLookup(formData);
         if (geo && geo.lat && geo.lng) {
@@ -344,7 +453,7 @@ export default function AppointmentModal({
         }
       }
 
-      await onSave({
+      const payload = {
         contact_name: formData.contact_name.trim(),
         contact_phone: formData.contact_phone.trim(),
         vehicle_plate: formData.vehicle_plate.toUpperCase().trim(),
@@ -369,9 +478,35 @@ export default function AppointmentModal({
         install_hidden_spot: '',
         internal_notes: formData.internal_notes.trim(),
         created_by: currentOperatorName,
-      });
+      };
 
-      if (!inlineMode) {
+      const formattedCopy = formatOsCopyText(payload);
+      setGeneratedOsText(formattedCopy);
+      setCopiedOs(false);
+
+      await onSave(payload, { stayOnPage: inlineMode, formattedCopy });
+
+      if (inlineMode) {
+        // Clear vehicle/client fields for next scheduling while keeping the generated OS copy box below!
+        setFormData((prev) => ({
+          ...prev,
+          contact_name: '',
+          contact_phone: '',
+          vehicle_model: '',
+          vehicle_plate: '',
+          window_start: addOneHour(prev.window_start),
+          search_address: '',
+          cep: '',
+          street: '',
+          street_number: '',
+          complement: '',
+          neighborhood: '',
+          internal_notes: '',
+        }));
+        setTimeout(() => {
+          copyBoxRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 120);
+      } else {
         onClose?.();
       }
     } finally {
@@ -383,384 +518,628 @@ export default function AppointmentModal({
     <div
       className={
         inlineMode
-          ? 'bg-[#0f2834] border border-[#1f495d] rounded-2xl w-full shadow-xl overflow-hidden'
+          ? 'space-y-6 w-full'
           : 'bg-[#0f2834] border border-[#1f495d] rounded-2xl max-w-4xl w-full max-h-[92vh] overflow-y-auto shadow-2xl'
       }
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 bg-[#12303e] border-b border-[#1f495d]">
-        <div>
-          <h2 className="text-lg font-bold text-white">
-            {initialData?.id ? `Editar agendamento (${initialData.os_number})` : 'Agendar serviço'}
-          </h2>
-          <p className="text-xs text-slate-300">
-            Preencha os dados do cliente, veículo e localização do atendimento.
-          </p>
-        </div>
-        {!inlineMode && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-[#193d4f] transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        )}
-      </div>
-
-      <form onSubmit={handleSubmit} className="p-6 space-y-6">
-        {/* 1. Informações do cliente */}
-        <div className="space-y-3">
-          <h3 className="text-sm font-bold text-white border-b border-[#1f495d] pb-1.5">
-            Informações do cliente
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Responsável pelo veículo <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Nome completo do cliente ou responsável"
-                value={formData.contact_name}
-                onChange={(e) => setFormData({ ...formData, contact_name: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Whatsapp / Telefone <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Ex: (31) 99999-0000"
-                value={formData.contact_phone}
-                onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* 2. Informações do veículo & horário */}
-        <div className="space-y-3">
-          <h3 className="text-sm font-bold text-white border-b border-[#1f495d] pb-1.5">
-            Informações do veículo
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Modelo do veículo <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Ex: TOYOTA SW4 / HONDA XRE 300"
-                value={formData.vehicle_model}
-                onChange={(e) => setFormData({ ...formData, vehicle_model: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Placa ou chassi <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Ex: ERM1234"
-                value={formData.vehicle_plate}
-                onChange={(e) =>
-                  setFormData({ ...formData, vehicle_plate: e.target.value.toUpperCase() })
-                }
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white font-mono focus:border-[#e31e24] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Serviço <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <select
-                value={formData.service_type}
-                onChange={(e) => setFormData({ ...formData, service_type: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
-              >
-                {Object.entries(SERVICE_TYPES).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Data e Horário do Serviço */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Data do serviço <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <input
-                type="date"
-                required
-                value={formData.scheduled_date}
-                onChange={(e) => setFormData({ ...formData, scheduled_date: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5 text-[#ff6b6f]" />
-                Horário do serviço <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <input
-                type="time"
-                step="60"
-                required
-                value={formData.window_start}
-                onChange={(e) => setFormData({ ...formData, window_start: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white font-mono"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* 3. Localização do serviço */}
-        <div className="space-y-3">
-          <h3 className="text-sm font-bold text-white border-b border-[#1f495d] pb-1.5">
-            Localização do serviço
-          </h3>
-
-          {/* Buscar endereço bar (just like Screenshot 3) */}
+      <div
+        className={
+          inlineMode
+            ? 'bg-[#0f2834] border border-[#1f495d] rounded-2xl w-full shadow-xl overflow-hidden'
+            : ''
+        }
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 bg-[#12303e] border-b border-[#1f495d]">
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">
-              Buscar endereço
-            </label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                <input
-                  type="text"
-                  placeholder="Digite o endereço para buscar ou cole diretamente do Google Maps..."
-                  value={formData.search_address}
-                  onChange={(e) => setFormData({ ...formData, search_address: e.target.value })}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleQuickSearchApply();
-                    }
-                  }}
-                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg pl-10 pr-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={handleQuickSearchApply}
-                disabled={geocoding}
-                className="px-4 py-2.5 rounded-lg bg-[#163848] hover:bg-[#1e495d] border border-[#24536a] text-white text-xs font-bold whitespace-nowrap transition cursor-pointer"
-              >
-                {geocoding ? 'Buscando...' : 'Localizar no Mapa'}
-              </button>
-            </div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Ao salvar, o sistema localiza automaticamente o endereço em Minas Gerais no mapa.
+            <h2 className="text-lg font-bold text-white">
+              {initialData?.id ? `Editar agendamento (${initialData.os_number})` : 'Agendar serviço'}
+            </h2>
+            <p className="text-xs text-slate-300">
+              Preencha os dados do cliente, veículo e localização do atendimento.
             </p>
           </div>
+          {!inlineMode && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-[#193d4f] transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
+        </div>
 
-          {/* CEP, Rua, Número */}
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5">
-            <div className="sm:col-span-3">
-              <label className="block text-xs font-medium text-slate-300 mb-1">CEP</label>
-              <input
-                type="text"
-                placeholder="30000-000"
-                value={formData.cep}
-                onChange={(e) => setFormData({ ...formData, cep: e.target.value })}
-                onBlur={() => {
-                  if (formData.cep.replace(/\D/g, '').length === 8) {
-                    runGeocodeLookup();
+        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+          {/* 1. Informações do cliente */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-white border-b border-[#1f495d] pb-1.5">
+              Informações do cliente
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Responsável pelo veículo <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Nome completo do cliente ou responsável"
+                  value={formData.contact_name}
+                  onChange={(e) => setFormData({ ...formData, contact_name: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Whatsapp / Telefone <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: (31) 99999-0000"
+                  value={formData.contact_phone}
+                  onChange={(e) => setFormData({ ...formData, contact_phone: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Informações do veículo & horário */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-white border-b border-[#1f495d] pb-1.5">
+              Informações do veículo
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Modelo do veículo <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: TOYOTA SW4 / HONDA XRE 300"
+                  value={formData.vehicle_model}
+                  onChange={(e) => setFormData({ ...formData, vehicle_model: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Placa ou chassi <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: ERM1234"
+                  value={formData.vehicle_plate}
+                  onChange={(e) =>
+                    setFormData({ ...formData, vehicle_plate: e.target.value.toUpperCase() })
                   }
-                }}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white font-mono"
-              />
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white font-mono focus:border-[#e31e24] focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Serviço <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <select
+                  value={formData.service_type}
+                  onChange={(e) => setFormData({ ...formData, service_type: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
+                >
+                  {Object.entries(SERVICE_TYPES).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            <div className="sm:col-span-6">
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Rua / Logradouro <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Ex: Rua João Gomide Leite"
-                value={formData.street}
-                onChange={(e) => setFormData({ ...formData, street: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
-              />
+            {/* Data e Horário do Serviço */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Data do serviço <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={formData.scheduled_date}
+                  onChange={(e) => setFormData({ ...formData, scheduled_date: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-[#ff6b6f]" />
+                  Horário do serviço <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="time"
+                  step="60"
+                  required
+                  value={formData.window_start}
+                  onChange={(e) => setFormData({ ...formData, window_start: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white font-mono"
+                />
+              </div>
             </div>
 
-            <div className="sm:col-span-3">
+            {/* Painel de Horários Disponíveis no Dia & Proximidade com o Último Horário Agendado */}
+            <div className="bg-[#0b1d26] border border-[#1f495d] rounded-xl p-4 space-y-3 mt-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-400" />
+                  Horários Disponíveis em {formatDateBR(formData.scheduled_date)} e Proximidade da Rota
+                </div>
+                <span className="text-[11px] text-slate-400">
+                  Clique em um horário livre para preencher
+                </span>
+              </div>
+
+              {/* Card do Último Horário Agendado no Dia */}
+              {scheduleAnalysis.lastScheduled ? (
+                <div className="bg-[#0f2834] border border-emerald-500/30 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                      <Navigation className="w-3.5 h-3.5" />
+                      Último Horário Agendado no Dia: {scheduleAnalysis.lastScheduled.cleanTime}
+                    </div>
+                    <div className="text-xs text-white font-semibold">
+                      {scheduleAnalysis.lastScheduled.address} —{' '}
+                      <span className="text-sky-300">
+                        {scheduleAnalysis.lastScheduled.neighborhood || 'Centro'} (
+                        {scheduleAnalysis.lastScheduled.city || 'Belo Horizonte'})
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-300">
+                      Cliente: <strong>{scheduleAnalysis.lastScheduled.contact_name}</strong> • Placa:{' '}
+                      <strong className="font-mono">{scheduleAnalysis.lastScheduled.vehicle_plate}</strong>
+                      {scheduleAnalysis.lastScheduled.distKm !== null && (
+                        <span className="ml-2 text-emerald-300 font-semibold">
+                          • 📍 Distância até este novo endereço: {scheduleAnalysis.lastScheduled.distKm} km (~
+                          {scheduleAnalysis.lastScheduled.driveMin} min)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        window_start: scheduleAnalysis.suggestedNextTimeAfterLast,
+                      }))
+                    }
+                    className="px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold whitespace-nowrap shadow transition cursor-pointer shrink-0"
+                  >
+                    Usar Próximo Horário ({scheduleAnalysis.suggestedNextTimeAfterLast})
+                  </button>
+                </div>
+              ) : (
+                <div className="text-xs text-emerald-300 bg-emerald-500/10 border border-emerald-500/25 rounded-lg px-3 py-2">
+                  ✅ Nenhum serviço agendado ainda para {formatDateBR(formData.scheduled_date)}. Todos os horários estão livres (este será o 1º serviço da rota).
+                </div>
+              )}
+
+              {/* Lista de botões de Horários do Dia */}
+              <div className="flex flex-wrap gap-2">
+                {scheduleAnalysis.slots.map((slot) => {
+                  const isSelected = formData.window_start === slot.time;
+                  if (!slot.isAvailable) {
+                    const occ = slot.occupiedItem;
+                    return (
+                      <button
+                        key={slot.time}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, window_start: slot.time })}
+                        className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-200 text-xs flex flex-col items-start transition cursor-pointer hover:bg-rose-500/25"
+                        title={`Já ocupado: ${occ.address} (${occ.neighborhood || occ.city})`}
+                      >
+                        <span className="font-mono font-bold">🔒 {slot.time} (Ocupado)</span>
+                        <span className="text-[10px] text-rose-300 truncate max-w-[140px]">
+                          {occ.neighborhood || occ.city}
+                          {occ.distKm !== null ? ` • a ${occ.distKm} km` : ''}
+                        </span>
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <button
+                      key={slot.time}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, window_start: slot.time })}
+                      className={`px-3 py-1.5 rounded-lg border text-xs flex flex-col items-start transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#e31e24] border-[#ff6b6f] text-white font-bold shadow-md'
+                          : slot.isRecommendedAfterLast
+                          ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200 hover:bg-emerald-500/30 font-semibold'
+                          : 'bg-[#0f2834] border-[#24536a] text-slate-200 hover:border-sky-400 hover:text-white'
+                      }`}
+                    >
+                      <span className="font-mono font-bold">
+                        {slot.isRecommendedAfterLast ? `⭐ ${slot.time}` : `🟢 ${slot.time}`}
+                      </span>
+                      <span className="text-[10px] opacity-90">
+                        {slot.isRecommendedAfterLast
+                          ? 'Sugerido (após último)'
+                          : slot.isRecommendedNearClosest
+                          ? 'Perto de OS próxima'
+                          : 'Disponível'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Resumo dos agendamentos já marcados no dia com distância para ajudar a encaixar perto */}
+              {scheduleAnalysis.dayList.length > 0 && (
+                <div className="pt-1 border-t border-[#193d4f] space-y-1.5">
+                  <div className="text-[11px] font-semibold text-slate-300">
+                    Serviços já agendados em {formatDateBR(formData.scheduled_date)} (para comparar proximidade de endereço):
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {scheduleAnalysis.dayList.map((item, idx) => (
+                      <div
+                        key={item.id || idx}
+                        className="text-[11px] bg-[#0f2834] border border-[#193d4f] rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2"
+                      >
+                        <div className="truncate">
+                          <span className="font-mono font-bold text-[#ff8589]">
+                            {item.cleanTime}
+                          </span>{' '}
+                          — <strong className="text-white">{item.neighborhood || item.city}</strong>{' '}
+                          <span className="text-slate-400">({item.address})</span>
+                        </div>
+                        {item.distKm !== null && (
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-mono font-semibold whitespace-nowrap shrink-0">
+                            {item.distKm} km
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 3. Localização do serviço */}
+          <div className="space-y-3">
+            <h3 className="text-sm font-bold text-white border-b border-[#1f495d] pb-1.5">
+              Localização do serviço
+            </h3>
+
+            {/* Buscar endereço bar */}
+            <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                Número <span className="text-[#ff6b6f]">*</span>
+                Buscar endereço
               </label>
-              <input
-                type="text"
-                placeholder="Ex: 81"
-                value={formData.street_number}
-                onChange={(e) => setFormData({ ...formData, street_number: e.target.value })}
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    placeholder="Digite o endereço para buscar e calcular a distância até o último horário agendado..."
+                    value={formData.search_address}
+                    onChange={(e) => setFormData({ ...formData, search_address: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleQuickSearchApply();
+                      }
+                    }}
+                    className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg pl-10 pr-3.5 py-2.5 text-sm text-white focus:border-[#e31e24] focus:outline-none"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleQuickSearchApply}
+                  disabled={geocoding}
+                  className="px-4 py-2.5 rounded-lg bg-[#163848] hover:bg-[#1e495d] border border-[#24536a] text-white text-xs font-bold whitespace-nowrap transition cursor-pointer"
+                >
+                  {geocoding ? 'Buscando...' : 'Localizar no Mapa'}
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Ao clicar em &quot;Localizar no Mapa&quot; ou salvar, o sistema calcula a distância exata até os outros serviços agendados do dia.
+              </p>
+            </div>
+
+            {/* CEP, Rua, Número */}
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5">
+              <div className="sm:col-span-3">
+                <label className="block text-xs font-medium text-slate-300 mb-1">CEP</label>
+                <input
+                  type="text"
+                  placeholder="30000-000"
+                  value={formData.cep}
+                  onChange={(e) => setFormData({ ...formData, cep: e.target.value })}
+                  onBlur={() => {
+                    if (formData.cep.replace(/\D/g, '').length === 8) {
+                      runGeocodeLookup();
+                    }
+                  }}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white font-mono"
+                />
+              </div>
+
+              <div className="sm:col-span-6">
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Rua / Logradouro <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Rua João Gomide Leite"
+                  value={formData.street}
+                  onChange={(e) => setFormData({ ...formData, street: e.target.value })}
+                  onBlur={() => {
+                    if (formData.street.trim().length > 4) {
+                      runGeocodeLookup();
+                    }
+                  }}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
+                />
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Número <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: 81"
+                  value={formData.street_number}
+                  onChange={(e) => setFormData({ ...formData, street_number: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
+                />
+              </div>
+            </div>
+
+            {/* Bairro, Cidade, UF, Complemento */}
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5">
+              <div className="sm:col-span-4">
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Bairro <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Pindorama"
+                  value={formData.neighborhood}
+                  onChange={(e) => setFormData({ ...formData, neighborhood: e.target.value })}
+                  onBlur={() => {
+                    if (formData.neighborhood.trim().length > 2) {
+                      runGeocodeLookup();
+                    }
+                  }}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
+                />
+              </div>
+
+              <div className="sm:col-span-4">
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Cidade <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Belo Horizonte"
+                  value={formData.city}
+                  onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  UF <span className="text-[#ff6b6f]">*</span>
+                </label>
+                <select
+                  value={formData.state}
+                  onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3 py-2.5 text-sm text-white"
+                >
+                  {UF_OPTIONS.map((uf) => (
+                    <option key={uf} value={uf}>
+                      {uf}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-slate-300 mb-1">
+                  Complemento
+                </label>
+                <input
+                  type="text"
+                  placeholder="Apto, Galpão..."
+                  value={formData.complement}
+                  onChange={(e) => setFormData({ ...formData, complement: e.target.value })}
+                  className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3 py-2.5 text-sm text-white"
+                />
+              </div>
+            </div>
+
+            {geoFeedback && (
+              <div className="text-xs text-emerald-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                {geoFeedback}
+              </div>
+            )}
+
+            {/* Mini Mapa de Conferência */}
+            <div className="rounded-xl overflow-hidden border border-[#24536a] isolate z-0 relative">
+              <div className="bg-[#12303e] px-3.5 py-2 text-xs text-slate-300 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-[#e31e24]" />
+                  Localização no Mapa (Clique em &quot;Localizar no Mapa&quot; ou arraste o pino 📍 se desejar)
+                </span>
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${formData.lat},${formData.lng}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[#ff6b6f] hover:underline font-semibold"
+                >
+                  Abrir no Google Maps ↗
+                </a>
+              </div>
+              <div ref={miniMapContainerRef} className="w-full h-44" />
+            </div>
+
+            {/* Observações */}
+            <div className="pt-1">
+              <label className="block text-xs font-medium text-slate-300 mb-1">Observações</label>
+              <textarea
+                rows={2}
+                placeholder="Informações adicionais sobre o agendamento..."
+                value={formData.internal_notes}
+                onChange={(e) => setFormData({ ...formData, internal_notes: e.target.value })}
                 className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
               />
             </div>
           </div>
 
-          {/* Bairro, Cidade, UF, Complemento */}
-          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3.5">
-            <div className="sm:col-span-4">
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Bairro <span className="text-[#ff6b6f]">*</span>
-              </label>
+          {/* Campo de Ordem de Serviço dentro do modal de Edição */}
+          {!inlineMode && generatedOsText && (
+            <div className="bg-[#0b1d26] border border-emerald-500/40 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-emerald-400">
+                  📋 Ordem de Serviço Pronta para Copiar:
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyGeneratedOs}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer"
+                >
+                  {copiedOs ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedOs ? 'Copiado!' : 'Copiar Ordem de Serviço'}
+                </button>
+              </div>
               <input
                 type="text"
-                required
-                placeholder="Ex: Pindorama"
-                value={formData.neighborhood}
-                onChange={(e) => setFormData({ ...formData, neighborhood: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
+                readOnly
+                value={generatedOsText}
+                onClick={(e) => e.target.select()}
+                className="w-full bg-[#0f2834] border border-[#24536a] rounded-lg px-3 py-2 text-xs text-white font-mono"
               />
-            </div>
-
-            <div className="sm:col-span-4">
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Cidade <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="Ex: Belo Horizonte"
-                value={formData.city}
-                onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                UF <span className="text-[#ff6b6f]">*</span>
-              </label>
-              <select
-                value={formData.state}
-                onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3 py-2.5 text-sm text-white"
-              >
-                {UF_OPTIONS.map((uf) => (
-                  <option key={uf} value={uf}>
-                    {uf}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-medium text-slate-300 mb-1">
-                Complemento
-              </label>
-              <input
-                type="text"
-                placeholder="Apto, Galpão..."
-                value={formData.complement}
-                onChange={(e) => setFormData({ ...formData, complement: e.target.value })}
-                className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3 py-2.5 text-sm text-white"
-              />
-            </div>
-          </div>
-
-          {geoFeedback && (
-            <div className="text-xs text-emerald-400 flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              {geoFeedback}
             </div>
           )}
 
-          {/* Mini Mapa de Conferência */}
-          <div className="rounded-xl overflow-hidden border border-[#24536a] isolate z-0 relative">
-            <div className="bg-[#12303e] px-3.5 py-2 text-xs text-slate-300 flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-[#e31e24]" />
-                Localização no Mapa (Clique em &quot;Localizar no Mapa&quot; ou arraste o pino 📍 se desejar)
-              </span>
-              <a
-                href={`https://www.google.com/maps/search/?api=1&query=${formData.lat},${formData.lng}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[#ff6b6f] hover:underline font-semibold"
-              >
-                Abrir no Google Maps ↗
-              </a>
+          {/* Footer Actions */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#1f495d]">
+            <div>
+              {initialData?.id && onDelete && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDelete(initialData.id);
+                    onClose?.();
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 text-xs font-semibold transition cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Excluir Agendamento
+                </button>
+              )}
             </div>
-            <div ref={miniMapContainerRef} className="w-full h-44" />
-          </div>
 
-          {/* Observações */}
-          <div className="pt-1">
-            <label className="block text-xs font-medium text-slate-300 mb-1">Observações</label>
-            <textarea
-              rows={3}
-              placeholder="Informações adicionais sobre o agendamento..."
-              value={formData.internal_notes}
-              onChange={(e) => setFormData({ ...formData, internal_notes: e.target.value })}
-              className="w-full bg-[#0b1d26] border border-[#24536a] rounded-lg px-3.5 py-2.5 text-sm text-white"
-            />
+            <div className="flex items-center gap-3">
+              {!inlineMode && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-4 py-2.5 rounded-lg bg-[#163848] hover:bg-[#1e495d] text-slate-200 text-sm font-medium transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-6 py-2.5 rounded-lg bg-[#e31e24] hover:bg-[#c8191e] text-white text-sm font-bold shadow-lg shadow-[#e31e24]/30 transition disabled:opacity-50 cursor-pointer"
+              >
+                {saving
+                  ? 'Salvando e Gerando OS...'
+                  : initialData?.id
+                  ? 'Salvar Alterações'
+                  : 'Concluir Agendamento e Gerar OS'}
+              </button>
+            </div>
           </div>
-        </div>
+        </form>
+      </div>
 
-        {/* Footer Actions */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#1f495d]">
-          <div>
-            {initialData?.id && onDelete && (
+      {/* CAIXA EMBAIXO DO AGENDAMENTO PARA COPIAR A ORDEM DE SERVIÇO */}
+      {inlineMode && generatedOsText && (
+        <div
+          ref={copyBoxRef}
+          className="bg-[#0f2834] border-2 border-emerald-500 rounded-2xl p-5 shadow-2xl space-y-3"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  Agendamento Concluído! Copie a Ordem de Serviço abaixo:
+                </h3>
+                <p className="text-xs text-slate-300">
+                  Formato padrão: (Horário) - (Serviço) - Endereço: Cliente: Contato: Placa: Modelo:
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  onDelete(initialData.id);
-                  onClose?.();
-                }}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/40 text-xs font-semibold transition cursor-pointer"
+                onClick={handleCopyGeneratedOs}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg transition cursor-pointer"
               >
-                <Trash2 className="w-3.5 h-3.5" />
-                Excluir Agendamento
+                {copiedOs ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Ordem de Serviço Copiada!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    Copiar Ordem de Serviço
+                  </>
+                )}
               </button>
-            )}
+
+              {onGoToList && (
+                <button
+                  type="button"
+                  onClick={onGoToList}
+                  className="px-3.5 py-2.5 rounded-xl bg-[#163848] hover:bg-[#1e495d] border border-[#24536a] text-slate-200 text-xs font-semibold transition cursor-pointer"
+                >
+                  Ver Lista de Agendamentos
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {!inlineMode && (
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-4 py-2.5 rounded-lg bg-[#163848] hover:bg-[#1e495d] text-slate-200 text-sm font-medium transition cursor-pointer"
-              >
-                Cancelar
-              </button>
-            )}
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-6 py-2.5 rounded-lg bg-[#e31e24] hover:bg-[#c8191e] text-white text-sm font-bold shadow-lg shadow-[#e31e24]/30 transition disabled:opacity-50 cursor-pointer"
-            >
-              {saving
-                ? 'Salvando e Geolocalizando...'
-                : initialData?.id
-                ? 'Salvar Alterações'
-                : 'Salvar Agendamento'}
-            </button>
-          </div>
+          <textarea
+            rows={2}
+            value={generatedOsText}
+            onChange={(e) => setGeneratedOsText(e.target.value)}
+            onClick={(e) => e.target.select()}
+            className="w-full bg-[#0b1d26] border border-emerald-500/50 rounded-xl px-4 py-3 text-sm text-white font-mono focus:outline-none"
+          />
         </div>
-      </form>
+      )}
     </div>
   );
 

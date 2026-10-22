@@ -14,6 +14,9 @@ import {
   ExternalLink,
   Trash2,
   UserCheck,
+  Copy,
+  Check,
+  CheckCircle2,
 } from 'lucide-react';
 import LoginScreen from './components/LoginScreen';
 import InteractiveRouteMap from './components/InteractiveRouteMap';
@@ -26,6 +29,7 @@ import {
   STATUS_CONFIG,
   formatDateBR,
   getSinglePointGoogleMapsUrl,
+  formatOsCopyText,
 } from './utils/constants';
 
 export default function App() {
@@ -61,6 +65,11 @@ export default function App() {
   const [isOsModalOpen, setIsOsModalOpen] = useState(false);
   const [editingOs, setEditingOs] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Ready-to-copy Ordem de Serviço text (shown after completing/saving an agendamento)
+  const [lastGeneratedOsText, setLastGeneratedOsText] = useState('');
+  const [copiedBanner, setCopiedBanner] = useState(false);
+  const [copiedRowId, setCopiedRowId] = useState(null);
 
   const fetchBootstrapData = useCallback(async () => {
     try {
@@ -104,7 +113,7 @@ export default function App() {
   };
 
   // Handlers for Appointments (OS)
-  const handleSaveAppointment = async (payload) => {
+  const handleSaveAppointment = async (payload, options = {}) => {
     if (editingOs?.id) {
       await fetch(`/api/appointments/${editingOs.id}`, {
         method: 'PUT',
@@ -118,11 +127,17 @@ export default function App() {
         body: JSON.stringify(payload),
       });
     }
+    const osText = options.formattedCopy || formatOsCopyText(payload);
+    setLastGeneratedOsText(osText);
+    setCopiedBanner(false);
+
     await fetchBootstrapData();
     if (payload.scheduled_date) {
       setSelectedDate(payload.scheduled_date);
     }
-    setActiveTab('agendamentos');
+    if (!options.stayOnPage) {
+      setActiveTab('agendamentos');
+    }
   };
 
   const handleDeleteAppointment = async (id) => {
@@ -136,7 +151,31 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
     });
+    const targetItem = appointments.find((a) => a.id === id);
+    if (targetItem) {
+      setLastGeneratedOsText(formatOsCopyText(targetItem));
+      setCopiedBanner(false);
+    }
     await fetchBootstrapData();
+  };
+
+  const handleCopyRowOs = (item) => {
+    const text = formatOsCopyText(item);
+    setLastGeneratedOsText(text);
+    navigator.clipboard.writeText(text);
+    setCopiedRowId(item.id);
+    setCopiedBanner(true);
+    setTimeout(() => {
+      setCopiedRowId(null);
+      setCopiedBanner(false);
+    }, 2500);
+  };
+
+  const handleCopyBannerOs = () => {
+    if (!lastGeneratedOsText) return;
+    navigator.clipboard.writeText(lastGeneratedOsText);
+    setCopiedBanner(true);
+    setTimeout(() => setCopiedBanner(false), 2500);
   };
 
   const handleAssignTechToAppointment = async (id, technicianId) => {
@@ -625,6 +664,24 @@ export default function App() {
                               <td className="py-3 px-4 text-right whitespace-nowrap space-x-1.5">
                                 <button
                                   type="button"
+                                  onClick={() => handleCopyRowOs(item)}
+                                  className="inline-flex items-center gap-1 px-2.5 h-7 rounded bg-[#163848] hover:bg-[#1e495d] text-emerald-300 border border-emerald-500/40 text-[11px] font-bold transition cursor-pointer"
+                                  title="Gerar e Copiar Ordem de Serviço"
+                                >
+                                  {copiedRowId === item.id ? (
+                                    <>
+                                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                      Copiado
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3.5 h-3.5" />
+                                      Copiar OS
+                                    </>
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => openEditOsModal(item)}
                                   className="inline-flex items-center justify-center w-8 h-7 rounded bg-emerald-600 hover:bg-emerald-500 text-white shadow transition cursor-pointer"
                                   title="Ver / Editar Agendamento"
@@ -661,6 +718,44 @@ export default function App() {
                   </table>
                 </div>
               </div>
+
+              {/* Campo embaixo dos Agendamentos para Copiar a Ordem de Serviço */}
+              {lastGeneratedOsText && (
+                <div className="bg-[#0f2834] border-2 border-emerald-500 rounded-xl p-4 shadow-xl space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span className="text-xs font-bold text-white">
+                        Ordem de Serviço Pronta para Copiar:
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyBannerOs}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow transition cursor-pointer"
+                    >
+                      {copiedBanner ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          Ordem de Serviço Copiada!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          Copiar Ordem de Serviço
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                     value={lastGeneratedOsText}
+                    onChange={(e) => setLastGeneratedOsText(e.target.value)}
+                    onClick={(e) => e.target.select()}
+                    className="w-full bg-[#0b1d26] border border-emerald-500/40 rounded-lg px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none"
+                  />
+                </div>
+              )}
 
               {/* Integrated Guardiar Map below the table */}
               <div className="space-y-3 pt-2">
@@ -714,7 +809,9 @@ export default function App() {
                 initialData={null}
                 defaultDate={selectedDate}
                 currentOperatorName={authenticatedUser?.name || 'David'}
+                appointments={appointments}
                 onSave={handleSaveAppointment}
+                onGoToList={() => setActiveTab('agendamentos')}
               />
             </div>
           )}
@@ -761,6 +858,7 @@ export default function App() {
         initialData={editingOs}
         defaultDate={selectedDate}
         currentOperatorName={authenticatedUser?.name || 'David'}
+        appointments={appointments}
         onSave={handleSaveAppointment}
         onDelete={editingOs?.id ? handleDeleteAppointment : null}
       />

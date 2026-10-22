@@ -105,3 +105,63 @@ export function getSinglePointGoogleMapsUrl(lat, lng, address = '') {
   }
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }
+
+export const DAILY_TIME_SLOTS = [
+  '08:00',
+  '09:00',
+  '10:00',
+  '11:00',
+  '12:00',
+  '13:00',
+  '14:00',
+  '15:00',
+  '16:00',
+  '17:00',
+  '18:00',
+];
+
+export function formatOsCopyText(item) {
+  if (!item) return '';
+  const horario = (item.window_start || item.scheduled_time || item.time_window || '08:00')
+    .split('-')[0]
+    .trim();
+  const servicoObj = SERVICE_TYPES[item.service_type] || SERVICE_TYPES.INSTALACAO;
+  const servico = servicoObj?.label || item.service_type || 'Instalação';
+
+  const addrBase = (item.address || '').trim();
+  const neigh = (item.neighborhood || '').trim();
+  const city = (item.city || 'Belo Horizonte').trim();
+  const state = (item.state || 'MG').trim();
+
+  let fullAddress = addrBase;
+  if (neigh && !fullAddress.toLowerCase().includes(neigh.toLowerCase())) {
+    fullAddress = fullAddress ? `${fullAddress} - ${neigh}` : neigh;
+  }
+  if (city && !fullAddress.toLowerCase().includes(city.toLowerCase())) {
+    fullAddress = fullAddress ? `${fullAddress}, ${city}/${state}` : `${city}/${state}`;
+  }
+
+  const cliente = (item.contact_name || item.client_name || '').trim();
+  const contato = (item.contact_phone || '').trim();
+  const placa = (item.vehicle_plate || '').toUpperCase().trim();
+  const modelo = (item.vehicle_model || '').trim();
+
+  return `${horario} - ${servico} - Endereço: ${fullAddress}  Cliente: ${cliente}  Contato: ${contato}  Placa: ${placa}  Modelo: ${modelo}`;
+}
+
+export function calculateDistanceKm(lat1, lng1, lat2, lng2) {
+  if (!lat1 || !lng1 || !lat2 || !lng2) return null;
+  const R = 6371;
+  const dLat = ((Number(lat2) - Number(lat1)) * Math.PI) / 180;
+  const dLng = ((Number(lng2) - Number(lng1)) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((Number(lat1) * Math.PI) / 180) *
+      Math.cos((Number(lat2) * Math.PI) / 180) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const straightKm = R * c;
+  return Number((straightKm * 1.3).toFixed(1));
+}
+
