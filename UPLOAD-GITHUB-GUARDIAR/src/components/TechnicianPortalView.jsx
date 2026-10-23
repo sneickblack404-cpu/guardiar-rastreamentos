@@ -17,7 +17,14 @@ import {
   Truck,
 } from 'lucide-react';
 import InteractiveRouteMap from './InteractiveRouteMap';
-import { STATUS_CONFIG, SERVICE_TYPES, formatDateBR, getSinglePointGoogleMapsUrl } from '../utils/constants';
+import WhatsAppIcon from './WhatsAppIcon';
+import {
+  STATUS_CONFIG,
+  SERVICE_TYPES,
+  formatDateBR,
+  getSinglePointGoogleMapsUrl,
+  getWhatsAppConfirmationUrl,
+} from '../utils/constants';
 
 export default function TechnicianPortalView({
   authenticatedUser,
@@ -350,9 +357,21 @@ export default function TechnicianPortalView({
                         <div className="flex items-center gap-2 text-emerald-300 font-semibold">
                           <Phone className="w-4 h-4 text-emerald-400 shrink-0" />
                           {item.contact_phone ? (
-                            <a href={`tel:${item.contact_phone}`} className="hover:underline">
-                              {item.contact_phone}
-                            </a>
+                            <div className="flex items-center gap-2">
+                              <a href={`tel:${item.contact_phone}`} className="hover:underline">
+                                {item.contact_phone}
+                              </a>
+                              <a
+                                href={getWhatsAppConfirmationUrl(item)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#25D366]/20 hover:bg-[#25D366]/30 text-[#25D366] border border-[#25D366]/40 text-[10px] font-semibold transition"
+                                title="Enviar mensagem no WhatsApp"
+                              >
+                                <WhatsAppIcon className="w-3 h-3" />
+                                WhatsApp
+                              </a>
+                            </div>
                           ) : (
                             <span className="text-slate-400">Telefone não informado</span>
                           )}
@@ -456,15 +475,28 @@ export default function TechnicianPortalView({
                         )}
                       </div>
 
-                      <a
-                        href={`https://www.google.com/maps/dir/?api=1&destination=${item.lat},${item.lng}&travelmode=driving`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#e31e24] hover:bg-[#c8191e] text-white text-xs font-bold shadow transition"
-                      >
-                        <Navigation className="w-3.5 h-3.5" />
-                        Ir com Google Maps ↗
-                      </a>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={getWhatsAppConfirmationUrl(item)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#25D366] hover:bg-[#20ba5a] text-white text-xs font-bold shadow transition cursor-pointer"
+                          title="Enviar Confirmação por WhatsApp"
+                        >
+                          <WhatsAppIcon className="w-3.5 h-3.5" />
+                          WhatsApp
+                        </a>
+
+                        <a
+                          href={`https://www.google.com/maps/dir/?api=1&destination=${item.lat},${item.lng}&travelmode=driving`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#e31e24] hover:bg-[#c8191e] text-white text-xs font-bold shadow transition"
+                        >
+                          <Navigation className="w-3.5 h-3.5" />
+                          Ir com Google Maps ↗
+                        </a>
+                      </div>
                     </div>
                   </div>
                 );

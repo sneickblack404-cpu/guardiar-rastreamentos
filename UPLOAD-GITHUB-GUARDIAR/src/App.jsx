@@ -25,11 +25,13 @@ import RoutePlannerView from './components/RoutePlannerView';
 import TechniciansAndStockView from './components/TechniciansAndStockView';
 import TechnicianPortalView from './components/TechnicianPortalView';
 import SettingsModal from './components/SettingsModal';
+import WhatsAppIcon from './components/WhatsAppIcon';
 import {
   STATUS_CONFIG,
   formatDateBR,
   getSinglePointGoogleMapsUrl,
   formatOsCopyText,
+  getWhatsAppConfirmationUrl,
 } from './utils/constants';
 
 export default function App() {
@@ -68,6 +70,7 @@ export default function App() {
 
   // Ready-to-copy Ordem de Serviço text (shown after completing/saving an agendamento)
   const [lastGeneratedOsText, setLastGeneratedOsText] = useState('');
+  const [lastSavedOsItem, setLastSavedOsItem] = useState(null);
   const [copiedBanner, setCopiedBanner] = useState(false);
   const [copiedRowId, setCopiedRowId] = useState(null);
 
@@ -129,6 +132,7 @@ export default function App() {
     }
     const osText = options.formattedCopy || formatOsCopyText(payload);
     setLastGeneratedOsText(osText);
+    setLastSavedOsItem(payload);
     setCopiedBanner(false);
 
     await fetchBootstrapData();
@@ -154,6 +158,7 @@ export default function App() {
     const targetItem = appointments.find((a) => a.id === id);
     if (targetItem) {
       setLastGeneratedOsText(formatOsCopyText(targetItem));
+      setLastSavedOsItem(targetItem);
       setCopiedBanner(false);
     }
     await fetchBootstrapData();
@@ -162,6 +167,7 @@ export default function App() {
   const handleCopyRowOs = (item) => {
     const text = formatOsCopyText(item);
     setLastGeneratedOsText(text);
+    setLastSavedOsItem(item);
     navigator.clipboard.writeText(text);
     setCopiedRowId(item.id);
     setCopiedBanner(true);
@@ -595,11 +601,23 @@ export default function App() {
                                 >
                                   {item.contact_name || item.client_name}
                                 </button>
-                                {item.contact_phone && (
-                                  <div className="text-[11px] text-slate-400">
-                                    {item.contact_phone}
-                                  </div>
-                                )}
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  {item.contact_phone && (
+                                    <span className="text-[11px] text-slate-400 font-mono">
+                                      {item.contact_phone}
+                                    </span>
+                                  )}
+                                  <a
+                                    href={getWhatsAppConfirmationUrl(item)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#25D366]/20 hover:bg-[#25D366]/30 text-[#25D366] border border-[#25D366]/40 text-[10px] font-semibold transition"
+                                    title="Confirmar agendamento via WhatsApp"
+                                  >
+                                    <WhatsAppIcon className="w-2.5 h-2.5" />
+                                    WhatsApp
+                                  </a>
+                                </div>
                               </td>
 
                               {/* Status */}
@@ -662,6 +680,16 @@ export default function App() {
 
                               {/* Ações */}
                               <td className="py-3 px-4 text-right whitespace-nowrap space-x-1.5">
+                                <a
+                                  href={getWhatsAppConfirmationUrl(item)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1.5 px-2.5 h-7 rounded bg-[#25D366] hover:bg-[#20ba5a] text-white text-[11px] font-bold shadow transition cursor-pointer"
+                                  title="Enviar Confirmação por WhatsApp"
+                                >
+                                  <WhatsAppIcon className="w-3.5 h-3.5" />
+                                  WhatsApp
+                                </a>
                                 <button
                                   type="button"
                                   onClick={() => handleCopyRowOs(item)}
@@ -726,30 +754,49 @@ export default function App() {
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                       <span className="text-xs font-bold text-white">
-                        Ordem de Serviço Pronta para Copiar:
+                        Ordem de Serviço Pronta para Copiar / Enviar:
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleCopyBannerOs}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow transition cursor-pointer"
-                    >
-                      {copiedBanner ? (
-                        <>
-                          <Check className="w-3.5 h-3.5" />
-                          Ordem de Serviço Copiada!
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5" />
-                          Copiar Ordem de Serviço
-                        </>
-                      )}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={
+                          lastSavedOsItem
+                            ? getWhatsAppConfirmationUrl(lastSavedOsItem)
+                            : `https://api.whatsapp.com/send?text=${encodeURIComponent(
+                                'Olá! Tudo bem? Passando para confirmar o agendamento do senhor(a), confirma?\n\n' +
+                                  lastGeneratedOsText
+                              )}`
+                        }
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#25D366] hover:bg-[#20ba5a] text-white text-xs font-bold shadow transition cursor-pointer"
+                        title="Enviar Confirmação por WhatsApp"
+                      >
+                        <WhatsAppIcon className="w-3.5 h-3.5" />
+                        Enviar no WhatsApp
+                      </a>
+                      <button
+                        type="button"
+                        onClick={handleCopyBannerOs}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow transition cursor-pointer"
+                      >
+                        {copiedBanner ? (
+                          <>
+                            <Check className="w-3.5 h-3.5" />
+                            Ordem de Serviço Copiada!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            Copiar Ordem de Serviço
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                   <input
                     type="text"
-                     value={lastGeneratedOsText}
+                    value={lastGeneratedOsText}
                     onChange={(e) => setLastGeneratedOsText(e.target.value)}
                     onClick={(e) => e.target.select()}
                     className="w-full bg-[#0b1d26] border border-emerald-500/40 rounded-lg px-3.5 py-2.5 text-xs text-white font-mono focus:outline-none"

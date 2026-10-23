@@ -18,7 +18,13 @@ import {
   UserMinus,
 } from 'lucide-react';
 import InteractiveRouteMap from './InteractiveRouteMap';
-import { STATUS_CONFIG, SERVICE_TYPES, formatDateBR } from '../utils/constants';
+import WhatsAppIcon from './WhatsAppIcon';
+import {
+  STATUS_CONFIG,
+  SERVICE_TYPES,
+  formatDateBR,
+  getWhatsAppConfirmationUrl,
+} from '../utils/constants';
 
 export default function RoutePlannerView({
   selectedDate,
@@ -495,6 +501,16 @@ export default function RoutePlannerView({
                       </div>
 
                       <div className="flex items-center gap-1.5">
+                        <a
+                          href={getWhatsAppConfirmationUrl(stop)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#25D366]/20 hover:bg-[#25D366]/30 text-[#25D366] border border-[#25D366]/40 text-[11px] font-semibold"
+                          title="Confirmar via WhatsApp"
+                        >
+                          <WhatsAppIcon className="w-3 h-3" />
+                          WhatsApp
+                        </a>
                         <button
                           type="button"
                           onClick={() => onEditAppointment(stop)}

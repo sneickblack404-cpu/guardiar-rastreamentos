@@ -149,6 +149,28 @@ export function formatOsCopyText(item) {
   return `${horario} - ${servico} - Endereço: ${fullAddress}  Cliente: ${cliente}  Contato: ${contato}  Placa: ${placa}  Modelo: ${modelo}`;
 }
 
+export function getWhatsAppConfirmationUrl(item) {
+  if (!item) return '';
+  const osText = formatOsCopyText(item);
+  const message = `Olá! Tudo bem? Passando para confirmar o agendamento do senhor(a), confirma?\n\n${osText}`;
+
+  // Clean phone number: remove non-digits
+  const rawPhone = (item.contact_phone || '').replace(/\D/g, '');
+  let phone = rawPhone;
+  if (phone) {
+    // If Brazilian number without country code (10 or 11 digits: e.g. 31999990000)
+    if (phone.length === 10 || phone.length === 11) {
+      phone = '55' + phone;
+    }
+  }
+
+  const encodedText = encodeURIComponent(message);
+  if (phone) {
+    return `https://api.whatsapp.com/send?phone=${phone}&text=${encodedText}`;
+  }
+  return `https://api.whatsapp.com/send?text=${encodedText}`;
+}
+
 export function calculateDistanceKm(lat1, lng1, lat2, lng2) {
   if (!lat1 || !lng1 || !lat2 || !lng2) return null;
   const R = 6371;

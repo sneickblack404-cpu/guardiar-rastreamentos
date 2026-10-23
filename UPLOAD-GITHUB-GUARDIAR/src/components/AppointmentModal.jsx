@@ -18,7 +18,9 @@ import {
   formatDateBR,
   formatOsCopyText,
   calculateDistanceKm,
+  getWhatsAppConfirmationUrl,
 } from '../utils/constants';
+import WhatsAppIcon from './WhatsAppIcon';
 
 const UF_OPTIONS = [
   'MG', 'SP', 'RJ', 'ES', 'PR', 'SC', 'RS', 'BA', 'GO', 'DF',
@@ -76,6 +78,7 @@ export default function AppointmentModal({
 
   // Stores the most recently completed/saved OS so the user can copy it right below the form
   const [generatedOsText, setGeneratedOsText] = useState('');
+  const [lastSavedItem, setLastSavedItem] = useState(null);
   const [copiedOs, setCopiedOs] = useState(false);
   const copyBoxRef = useRef(null);
 
@@ -482,6 +485,7 @@ export default function AppointmentModal({
 
       const formattedCopy = formatOsCopyText(payload);
       setGeneratedOsText(formattedCopy);
+      setLastSavedItem(payload);
       setCopiedOs(false);
 
       await onSave(payload, { stayOnPage: inlineMode, formattedCopy });
@@ -1014,18 +1018,30 @@ export default function AppointmentModal({
           {/* Campo de Ordem de Serviço dentro do modal de Edição */}
           {!inlineMode && generatedOsText && (
             <div className="bg-[#0b1d26] border border-emerald-500/40 rounded-xl p-4 space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-bold text-emerald-400">
-                  📋 Ordem de Serviço Pronta para Copiar:
+                  📋 Ordem de Serviço Pronta para Copiar / Enviar:
                 </span>
-                <button
-                  type="button"
-                  onClick={handleCopyGeneratedOs}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer"
-                >
-                  {copiedOs ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copiedOs ? 'Copiado!' : 'Copiar Ordem de Serviço'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={getWhatsAppConfirmationUrl(initialData || formData)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#25D366] hover:bg-[#20ba5a] text-white text-xs font-bold shadow transition cursor-pointer"
+                    title="Enviar Confirmação por WhatsApp"
+                  >
+                    <WhatsAppIcon className="w-3.5 h-3.5" />
+                    WhatsApp
+                  </a>
+                  <button
+                    type="button"
+                    onClick={handleCopyGeneratedOs}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition cursor-pointer"
+                  >
+                    {copiedOs ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedOs ? 'Copiado!' : 'Copiar Ordem de Serviço'}
+                  </button>
+                </div>
               </div>
               <input
                 type="text"
@@ -1100,7 +1116,25 @@ export default function AppointmentModal({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <a
+                href={
+                  lastSavedItem
+                    ? getWhatsAppConfirmationUrl(lastSavedItem)
+                    : `https://api.whatsapp.com/send?text=${encodeURIComponent(
+                        'Olá! Tudo bem? Passando para confirmar o agendamento do senhor(a), confirma?\n\n' +
+                          generatedOsText
+                      )}`
+                }
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#25D366] hover:bg-[#20ba5a] text-white text-xs font-bold shadow-lg transition cursor-pointer"
+                title="Enviar Confirmação por WhatsApp"
+              >
+                <WhatsAppIcon className="w-4 h-4" />
+                Enviar no WhatsApp
+              </a>
+
               <button
                 type="button"
                 onClick={handleCopyGeneratedOs}
