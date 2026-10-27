@@ -17,11 +17,13 @@ import {
   Copy,
   Check,
   CheckCircle2,
+  Navigation,
 } from 'lucide-react';
 import LoginScreen from './components/LoginScreen';
 import InteractiveRouteMap from './components/InteractiveRouteMap';
 import AppointmentModal from './components/AppointmentModal';
 import RoutePlannerView from './components/RoutePlannerView';
+import ServiceDistanceCalculatorView from './components/ServiceDistanceCalculatorView';
 import TechniciansAndStockView from './components/TechniciansAndStockView';
 import TechnicianPortalView from './components/TechnicianPortalView';
 import SettingsModal from './components/SettingsModal';
@@ -333,6 +335,7 @@ export default function App() {
   const navItems = [
     { id: 'agendamentos', label: 'Agendamentos', icon: Calendar },
     { id: 'agendar', label: 'Agendar serviço', icon: CalendarPlus },
+    { id: 'distance_calc', label: 'Calcular Distância', icon: Navigation },
     { id: 'routes', label: 'Mapa & Rotas', icon: Route },
     { id: 'technicians', label: 'Técnicos', icon: Users },
   ];
@@ -431,6 +434,7 @@ export default function App() {
             <h1 className="text-base font-bold text-white">
               {activeTab === 'agendamentos' && 'Agendamentos'}
               {activeTab === 'agendar' && 'Agendar serviço'}
+              {activeTab === 'distance_calc' && 'Calcular Rota de Distância & Horários Disponíveis'}
               {activeTab === 'routes' && 'Mapa & Rotas Google Maps'}
               {activeTab === 'technicians' && 'Técnicos de Campo'}
             </h1>
@@ -861,6 +865,27 @@ export default function App() {
                 onGoToList={() => setActiveTab('agendamentos')}
               />
             </div>
+          )}
+
+          {/* VIEW: CALCULAR DISTÂNCIA & HORÁRIOS */}
+          {activeTab === 'distance_calc' && (
+            <ServiceDistanceCalculatorView
+              selectedDate={selectedDate}
+              onChangeDate={setSelectedDate}
+              appointments={appointments}
+              settings={settings}
+              onScheduleAtSlot={({ date, time, destAddress }) => {
+                setSelectedDate(date);
+                setEditingOs({
+                  scheduled_date: date,
+                  window_start: time,
+                  scheduled_time: time,
+                  time_window: time,
+                  address: destAddress,
+                });
+                setActiveTab('agendar');
+              }}
+            />
           )}
 
           {/* VIEW 3: MAPA & ROTAS GOOGLE MAPS */}
