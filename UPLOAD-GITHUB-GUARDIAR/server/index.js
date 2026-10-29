@@ -2,6 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const path = require('node:path');
 const { db, getLocalDateStr } = require('./db');
+const {
+  syncOnStartup,
+  persistAppointment,
+  persistSetting,
+  persistTechnician,
+} = require('./neon');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -196,6 +202,7 @@ app.put('/api/settings', (req, res) => {
     const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
     for (const [k, v] of Object.entries(updates)) {
       stmt.run(k, String(v ?? ''));
+      persistSetting(k, String(v ?? '')).catch(() => {});
     }
     res.json({ settings: getSettingsMap() });
   } catch (err) {
@@ -496,6 +503,9 @@ app.post('/api/appointments', async (req, res) => {
     );
 
     const created = getEnrichedAppointments().find((a) => a.id === Number(result.lastInsertRowid));
+    if (created) {
+      persistAppointment(created).catch(() => {});
+    }
     res.status(201).json({ appointment: created });
   } catch (err) {
     console.error('Error creating appointment:', err);
@@ -618,6 +628,9 @@ app.put('/api/appointments/:id', async (req, res) => {
     );
 
     const updated = getEnrichedAppointments().find((a) => a.id === id);
+    if (updated) {
+      persistAppointment(updated).catch(() => {});
+    }
     res.json({ appointment: updated });
   } catch (err) {
     console.error('Error updating appointment:', err);
@@ -675,6 +688,9 @@ app.patch('/api/appointments/:id/status', (req, res) => {
     );
 
     const updated = getEnrichedAppointments().find((a) => a.id === id);
+    if (updated) {
+      persistAppointment(updated).catch(() => {});
+    }
     res.json({ appointment: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -686,6 +702,7 @@ app.delete('/api/appointments/:id', (req, res) => {
   try {
     const id = Number(req.params.id);
     db.prepare('DELETE FROM appointments WHERE id = ?').run(id);
+    persistAppointment({ id }, true).catch(() => {});
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -813,6 +830,7 @@ app.post('/api/routes/optimize', (req, res) => {
     orderedStops.forEach((stop, idx) => {
       stop.route_order = idx + 1;
       updateOrderStmt.run(idx + 1, stop.id);
+      persistAppointment(stop).catch(() => {});
     });
 
     const avgSpeedKmh = Number(settings.default_urban_speed_kmh || 28);
@@ -948,6 +966,9 @@ app.post('/api/technicians', (req, res) => {
     );
 
     const created = db.prepare('SELECT * FROM technicians WHERE id = ?').get(Number(result.lastInsertRowid));
+    if (created) {
+      persistTechnician(created).catch(() => {});
+    }
     res.status(201).json({
       technician: { ...created, skills: JSON.parse(created.skills || '[]') },
     });
@@ -1004,6 +1025,9 @@ app.put('/api/technicians/:id', (req, res) => {
     );
 
     const updated = db.prepare('SELECT * FROM technicians WHERE id = ?').get(id);
+    if (updated) {
+      persistTechnician(updated).catch(() => {});
+    }
     res.json({ technician: { ...updated, skills: JSON.parse(updated.skills || '[]') } });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1016,6 +1040,7 @@ app.delete('/api/technicians/:id', (req, res) => {
     const id = Number(req.params.id);
     db.prepare('UPDATE appointments SET technician_id = NULL, route_order = 0 WHERE technician_id = ?').run(id);
     db.prepare('DELETE FROM technicians WHERE id = ?').run(id);
+    persistTechnician({ id }, true).catch(() => {});
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1146,6 +1171,11 @@ app.use((req, res, next) => {
     });
   }
   next();
+});
+
+// Sincronização inicial com o banco persistente Neon Postgres
+syncOnStartup(db).catch((err) => {
+  console.error('[Neon Postgres] Falha na sincronização inicial:', err.message);
 });
 
 app.listen(PORT, '0.0.0.0', () => {
