@@ -4,6 +4,13 @@ const DATABASE_URL =
   process.env.DATABASE_URL ||
   'postgresql://neondb_owner:npg_wSOZUH4Enf1x@ep-sparkling-glade-b5fo0gh8-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require';
 
+function toSqliteVal(val) {
+  if (val === undefined || val === null) return null;
+  if (val instanceof Date) return val.toISOString().replace('T', ' ').substring(0, 19);
+  if (typeof val === 'object') return JSON.stringify(val);
+  return val;
+}
+
 let pool = null;
 
 function getPool() {
@@ -305,37 +312,37 @@ async function syncOnStartup(sqliteDb) {
       `);
       for (const a of cloudApps.rows) {
         upsertApp.run(
-          a.id,
-          a.os_number,
-          a.contact_name,
-          a.contact_phone || '',
-          a.vehicle_plate,
-          a.vehicle_model,
-          a.technician_id,
-          a.tracker_id,
-          a.service_type,
-          a.priority,
-          a.status,
-          a.scheduled_date,
-          a.window_start,
-          a.window_end,
-          a.time_window,
-          a.scheduled_time,
-          a.estimated_duration_min,
-          a.address,
-          a.neighborhood,
-          a.city,
-          a.state,
-          a.cep,
-          a.lat,
-          a.lng,
-          a.onsite_authorized_person,
-          a.install_hidden_spot,
-          a.route_order,
-          a.internal_notes,
-          a.created_by,
-          a.created_at,
-          a.completed_at
+          toSqliteVal(a.id),
+          toSqliteVal(a.os_number),
+          toSqliteVal(a.contact_name),
+          toSqliteVal(a.contact_phone || ''),
+          toSqliteVal(a.vehicle_plate),
+          toSqliteVal(a.vehicle_model),
+          a.technician_id != null ? Number(a.technician_id) : null,
+          a.tracker_id != null ? Number(a.tracker_id) : null,
+          toSqliteVal(a.service_type),
+          toSqliteVal(a.priority),
+          toSqliteVal(a.status),
+          toSqliteVal(a.scheduled_date),
+          toSqliteVal(a.window_start),
+          toSqliteVal(a.window_end),
+          toSqliteVal(a.time_window),
+          toSqliteVal(a.scheduled_time),
+          Number(a.estimated_duration_min) || 60,
+          toSqliteVal(a.address),
+          toSqliteVal(a.neighborhood),
+          toSqliteVal(a.city),
+          toSqliteVal(a.state),
+          toSqliteVal(a.cep),
+          a.lat != null ? Number(a.lat) : null,
+          a.lng != null ? Number(a.lng) : null,
+          toSqliteVal(a.onsite_authorized_person),
+          toSqliteVal(a.install_hidden_spot),
+          Number(a.route_order || 0),
+          toSqliteVal(a.internal_notes),
+          toSqliteVal(a.created_by),
+          toSqliteVal(a.created_at),
+          toSqliteVal(a.completed_at)
         );
       }
       console.log(
